@@ -5,8 +5,11 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 
+type Step = 'form' | 'success'
+
 export default function SignupPage() {
   const router = useRouter()
+  const [step, setStep] = useState<Step>('form')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [form, setForm] = useState({
@@ -28,7 +31,7 @@ export default function SignupPage() {
 
     const supabase = createClient()
 
-    // Step 1: Create the auth user first
+    // Step 1: Create auth user
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
@@ -41,48 +44,46 @@ export default function SignupPage() {
     })
 
     if (authError || !authData.user) {
-      setError(authError?.message ?? 'Signup failed')
+      setError(authError?.message ?? 'Signup failed. Try again.')
       setLoading(false)
       return
     }
 
-    // Step 2: Now authenticated — create the school
-    const { data: school, error: schoolError } = await supabase
-      .from('schools')
-      .insert({
-        name: form.schoolName,
-        email: form.email,
-        phone: form.phone,
-        plan: 'basic',
-      })
-      .select()
-      .single()
+    // Step 2: Use security definer function to create school + link profile
+    const { error: fnError } = await supabase.rpc('create_school_for_user', {
+      school_name: form.schoolName,
+      school_email: form.email,
+      school_phone: form.phone,
+    })
 
-    if (schoolError || !school) {
-      setError(schoolError?.message ?? 'Failed to create school')
+    if (fnError) {
+      setError(fnError.message)
       setLoading(false)
       return
     }
 
-    // Step 3: Update profile with school_id and phone
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({
-        school_id: school.id,
-        phone: form.phone,
-        full_name: form.fullName,
-        role: 'school_admin',
-      })
-      .eq('id', authData.user.id)
+    // Done — show success then redirect
+    setStep('success')
+    setTimeout(() => {
+      router.push('/dashboard')
+      router.refresh()
+    }, 2000)
+  }
 
-    if (profileError) {
-      setError(profileError.message)
-      setLoading(false)
-      return
-    }
-
-    router.push('/dashboard')
-    router.refresh()
+  if (step === 'success') {
+    return (
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm text-center">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold text-slate-900 mb-2">Account created</h2>
+          <p className="text-slate-500 text-sm">Taking you to your dashboard...</p>
+        </div>
+      </main>
+    )
   }
 
   return (

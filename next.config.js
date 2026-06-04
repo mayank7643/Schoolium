@@ -11,7 +11,7 @@ const nextConfig = {
     ],
   },
   // Required for Netlify
-  output: 'standalone',
+  
 }
 
 module.exports = nextConfig

@@ -10,8 +10,6 @@ const nextConfig = {
       },
     ],
   },
-  // Required for Netlify
-  
 }
 
 module.exports = nextConfig

@@ -123,28 +123,29 @@ export default function ClassesPage() {
       </div>
 
       {loading ? (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
           {[...Array(6)].map((_, i) => (
-            <div key={i} className="card h-20 animate-pulse bg-slate-50" />
+            <div key={i} className="card h-24 animate-pulse bg-slate-50" />
           ))}
         </div>
       ) : classes.length > 0 ? (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 lg:gap-4">
           {classes.map((cls) => (
-            <div key={cls.id} className="card flex items-start justify-between gap-2 group">
-              <div className="flex items-start gap-3">
-                <div className="w-9 h-9 bg-purple-50 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
-                  <BookOpen size={16} className="text-purple-600" />
+            <div key={cls.id} className="card flex items-start justify-between gap-2 group p-4 lg:p-6">
+              <div className="flex items-start gap-2 lg:gap-3 min-w-0">
+                <div className="w-8 h-8 lg:w-9 lg:h-9 bg-purple-50 rounded-lg flex items-center justify-center shrink-0 mt-0.5">
+                  <BookOpen size={15} className="text-purple-600" />
                 </div>
-                <div>
-                  <p className="font-semibold text-slate-900">{cls.name}</p>
-                  {cls.section && <p className="text-xs text-slate-500">{cls.section}</p>}
+                <div className="min-w-0">
+                  <p className="font-semibold text-slate-900 truncate">{cls.name}</p>
+                  {cls.section && <p className="text-xs text-slate-500 truncate">{cls.section}</p>}
                   <p className="text-xs text-slate-400 mt-0.5">
                     {studentCounts[cls.id] ?? 0} student{(studentCounts[cls.id] ?? 0) !== 1 ? 's' : ''}
                   </p>
                 </div>
               </div>
-              <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {/* Desktop: hover to reveal. Mobile: always visible */}
+              <div className="flex flex-col gap-1 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity shrink-0">
                 <button onClick={() => openEdit(cls)}
                   className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors">
                   <Pencil size={12} />

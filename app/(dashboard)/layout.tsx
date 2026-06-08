@@ -21,7 +21,14 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen flex bg-slate-50">
       <Sidebar profile={profile} />
-      <main className="flex-1 min-w-0 p-6">
+
+      {/*
+        Desktop: no top/bottom offset — sidebar is fixed to left
+        Mobile:
+          pt-14  → clears the fixed top bar (h-14)
+          pb-20  → clears the fixed bottom nav (h-16) + safe area
+      */}
+      <main className="flex-1 min-w-0 p-4 lg:p-6 pt-[72px] pb-24 lg:pt-6 lg:pb-6">
         {children}
       </main>
     </div>

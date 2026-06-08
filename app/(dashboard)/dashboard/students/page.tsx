@@ -22,23 +22,103 @@ interface StudentItem {
   classes?: { id: string; name: string; section: string | null } | null
 }
 
-// Sort classes: numerically first (1,2…12), then alphabetically (Graduation, LKG…)
 function sortClasses(classes: ClassItem[]): ClassItem[] {
   return [...classes].sort((a, b) => {
-    const aNum = parseInt(a.name)
-    const bNum = parseInt(b.name)
-    const aIsNum = !isNaN(aNum)
-    const bIsNum = !isNaN(bNum)
+    const aNum = parseInt(a.name), bNum = parseInt(b.name)
+    const aIsNum = !isNaN(aNum), bIsNum = !isNaN(bNum)
     if (aIsNum && bIsNum) {
       if (aNum !== bNum) return aNum - bNum
       return (a.section ?? '').localeCompare(b.section ?? '')
     }
     if (aIsNum) return -1
     if (bIsNum) return 1
-    const nameCmp = a.name.localeCompare(b.name)
-    if (nameCmp !== 0) return nameCmp
-    return (a.section ?? '').localeCompare(b.section ?? '')
+    const n = a.name.localeCompare(b.name)
+    return n !== 0 ? n : (a.section ?? '').localeCompare(b.section ?? '')
   })
+}
+
+// ── Mobile card for one student ───────────────────────────────────────────────
+function StudentCard({ student, avatarBg }: { student: StudentItem; avatarBg: string }) {
+  return (
+    <Link
+      href={`/dashboard/students/${student.id}`}
+      className="flex items-center gap-3 px-4 py-3 border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors active:bg-slate-100"
+    >
+      <div className={`w-9 h-9 ${avatarBg} rounded-full flex items-center justify-center shrink-0`}>
+        <span className="text-brand-700 font-semibold text-sm">
+          {student.full_name.charAt(0).toUpperCase()}
+        </span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-slate-900 text-sm truncate">{student.full_name}</span>
+          {student.student_uid && (
+            <span className="font-mono text-[10px] bg-brand-50 text-brand-700 border border-brand-200 px-1.5 py-0.5 rounded shrink-0">
+              {student.student_uid}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 mt-0.5 text-xs text-slate-400 flex-wrap">
+          {student.father_name && <span>{student.father_name}</span>}
+          {student.father_name && student.parent_phone && <span>·</span>}
+          {student.parent_phone && <span className="font-mono">{student.parent_phone}</span>}
+        </div>
+      </div>
+      <span className="text-brand-600 text-xs font-medium shrink-0">View →</span>
+    </Link>
+  )
+}
+
+// ── Desktop table row ─────────────────────────────────────────────────────────
+function StudentRow({ student, avatarBg }: { student: StudentItem; avatarBg: string }) {
+  return (
+    <tr>
+      <td>
+        <div className="flex items-center gap-3">
+          <div className={`w-8 h-8 ${avatarBg} rounded-full flex items-center justify-center shrink-0`}>
+            <span className="text-brand-700 font-medium text-xs">
+              {student.full_name.charAt(0).toUpperCase()}
+            </span>
+          </div>
+          <span className="font-medium text-slate-900 truncate">{student.full_name}</span>
+        </div>
+      </td>
+      <td>
+        {student.student_uid
+          ? <span className="font-mono text-xs bg-brand-50 text-brand-700 border border-brand-200 px-2 py-0.5 rounded whitespace-nowrap">{student.student_uid}</span>
+          : <span className="text-slate-300">—</span>}
+      </td>
+      <td className="text-slate-600">{student.father_name ?? <span className="text-slate-300">—</span>}</td>
+      <td className="text-slate-600 font-mono text-xs">{student.parent_phone ?? <span className="text-slate-300">—</span>}</td>
+      <td className="text-slate-500 text-xs">
+        {student.admission_date
+          ? new Date(student.admission_date).toLocaleDateString('en-IN')
+          : <span className="text-slate-300">—</span>}
+      </td>
+      <td>
+        <Link href={`/dashboard/students/${student.id}`} className="text-brand-600 text-sm font-medium hover:underline">
+          View
+        </Link>
+      </td>
+    </tr>
+  )
+}
+
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+function CardSkeleton() {
+  return (
+    <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-slate-50 last:border-0">
+          <div className="w-9 h-9 bg-slate-100 rounded-full animate-pulse shrink-0" />
+          <div className="flex-1">
+            <div className="h-3.5 w-28 bg-slate-100 rounded animate-pulse mb-1.5" />
+            <div className="h-3 w-20 bg-slate-100 rounded animate-pulse" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function TableSkeleton() {
@@ -47,23 +127,13 @@ function TableSkeleton() {
       <table className="table">
         <thead>
           <tr>
-            <th style={{ width: '28%' }}>Name</th>
-            <th style={{ width: '14%' }}>Student ID</th>
-            <th style={{ width: '20%' }}>Father</th>
-            <th style={{ width: '16%' }}>Phone</th>
-            <th style={{ width: '14%' }}>Admitted</th>
-            <th style={{ width: '8%' }}></th>
+            <th>Name</th><th>Student ID</th><th>Father</th><th>Phone</th><th>Admitted</th><th></th>
           </tr>
         </thead>
         <tbody>
-          {[...Array(4)].map((_, i) => (
+          {[...Array(3)].map((_, i) => (
             <tr key={i}>
-              <td>
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-slate-100 rounded-full animate-pulse shrink-0" />
-                  <div className="h-3.5 w-28 bg-slate-100 rounded animate-pulse" />
-                </div>
-              </td>
+              <td><div className="flex items-center gap-3"><div className="w-8 h-8 bg-slate-100 rounded-full animate-pulse shrink-0" /><div className="h-3.5 w-28 bg-slate-100 rounded animate-pulse" /></div></td>
               <td><div className="h-3.5 w-20 bg-slate-100 rounded animate-pulse" /></td>
               <td><div className="h-3.5 w-24 bg-slate-100 rounded animate-pulse" /></td>
               <td><div className="h-3.5 w-20 bg-slate-100 rounded animate-pulse" /></td>
@@ -77,17 +147,58 @@ function TableSkeleton() {
   )
 }
 
+// ── Renders either mobile cards or desktop table depending on screen ───────────
+function StudentGroup({
+  rows, avatarBg, groupLabel, count,
+}: {
+  rows: StudentItem[]
+  avatarBg: string
+  groupLabel: string
+  count: number
+}) {
+  return (
+    <div>
+      {/* Group header */}
+      <div className="flex items-center gap-3 mb-3">
+        <div className="w-1 h-5 bg-brand-600 rounded-full" />
+        <h2 className="font-semibold text-slate-800 text-sm">{groupLabel}</h2>
+        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+          {count} student{count !== 1 ? 's' : ''}
+        </span>
+      </div>
+
+      {/* Mobile: card list */}
+      <div className="lg:hidden bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+        {rows.map(s => <StudentCard key={s.id} student={s} avatarBg={avatarBg} />)}
+      </div>
+
+      {/* Desktop: full table */}
+      <div className="hidden lg:block table-wrapper">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Name</th><th>Student ID</th><th>Father</th><th>Phone</th><th>Admitted</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(s => <StudentRow key={s.id} student={s} avatarBg={avatarBg} />)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 export default function StudentsPage() {
-  const [classes, setClasses] = useState<ClassItem[]>([])
-  const [students, setStudents] = useState<StudentItem[]>([])
-  const [loading, setLoading] = useState(true)
+  const [classes, setClasses]           = useState<ClassItem[]>([])
+  const [students, setStudents]         = useState<StudentItem[]>([])
+  const [loading, setLoading]           = useState(true)
   const [filterLoading, setFilterLoading] = useState(false)
-  const [query, setQuery] = useState('')
-  const [classFilter, setClassFilter] = useState('')
+  const [query, setQuery]               = useState('')
+  const [classFilter, setClassFilter]   = useState('')
 
   const fetchData = useCallback(async (cls: string, q: string) => {
     const supabase = createClient()
-
     const [classesRes, studentsRes] = await Promise.all([
       supabase.from('classes').select('id, name, section').order('name'),
       (async () => {
@@ -96,12 +207,11 @@ export default function StudentsPage() {
           .select('id, full_name, student_uid, father_name, parent_phone, admission_date, class_id, classes(id, name, section)')
           .eq('is_active', true)
           .order('full_name')
-        if (q) sq = sq.ilike('full_name', `%${q}%`)
+        if (q)   sq = sq.ilike('full_name', `%${q}%`)
         if (cls) sq = sq.eq('class_id', cls)
         return sq
       })(),
     ])
-
     setClasses(sortClasses(classesRes.data ?? []))
     setStudents((studentsRes.data ?? []) as any as StudentItem[])
     setLoading(false)
@@ -122,7 +232,7 @@ export default function StudentsPage() {
     await fetchData(classFilter, q)
   }
 
-  // Group students by class
+  // Group
   const grouped: Record<string, StudentItem[]> = {}
   const unassigned: StudentItem[] = []
   students.forEach(s => {
@@ -133,89 +243,16 @@ export default function StudentsPage() {
   })
   const orderedClasses = classes.filter(c => grouped[c.id]?.length > 0)
 
-  function StudentRow({ student, avatarBg }: { student: StudentItem; avatarBg: string }) {
-    return (
-      <tr>
-        <td style={{ width: '28%' }}>
-          <div className="flex items-center gap-3">
-            <div className={`w-8 h-8 ${avatarBg} rounded-full flex items-center justify-center shrink-0`}>
-              <span className="text-brand-700 font-medium text-xs">
-                {student.full_name.charAt(0).toUpperCase()}
-              </span>
-            </div>
-            <span className="font-medium text-slate-900 truncate">{student.full_name}</span>
-          </div>
-        </td>
-        <td style={{ width: '14%' }}>
-          {student.student_uid
-            ? <span className="font-mono text-xs bg-brand-50 text-brand-700 border border-brand-200 px-2 py-0.5 rounded whitespace-nowrap">{student.student_uid}</span>
-            : <span className="text-slate-300">—</span>}
-        </td>
-        <td style={{ width: '20%' }} className="text-slate-600">
-          {student.father_name ?? <span className="text-slate-300">—</span>}
-        </td>
-        <td style={{ width: '16%' }} className="text-slate-600 font-mono text-xs">
-          {student.parent_phone ?? <span className="text-slate-300">—</span>}
-        </td>
-        <td style={{ width: '14%' }} className="text-slate-500 text-xs">
-          {student.admission_date
-            ? new Date(student.admission_date).toLocaleDateString('en-IN')
-            : <span className="text-slate-300">—</span>}
-        </td>
-        <td style={{ width: '8%' }}>
-          <Link
-            href={`/dashboard/students/${student.id}`}
-            className="text-brand-600 text-sm font-medium hover:underline"
-          >
-            View
-          </Link>
-        </td>
-      </tr>
-    )
-  }
-
-  function StudentTable({ rows, avatarBg }: { rows: StudentItem[]; avatarBg: string }) {
-    return (
-      <div className="table-wrapper">
-        <table className="table" style={{ tableLayout: 'fixed', width: '100%' }}>
-          <colgroup>
-            <col style={{ width: '28%' }} />
-            <col style={{ width: '14%' }} />
-            <col style={{ width: '20%' }} />
-            <col style={{ width: '16%' }} />
-            <col style={{ width: '14%' }} />
-            <col style={{ width: '8%' }} />
-          </colgroup>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Student ID</th>
-              <th>Father</th>
-              <th>Phone</th>
-              <th>Admitted</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(s => <StudentRow key={s.id} student={s} avatarBg={avatarBg} />)}
-          </tbody>
-        </table>
-      </div>
-    )
-  }
-
   return (
     <div className="max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Students</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            {loading ? (
-              <span className="inline-block h-3 w-24 bg-slate-200 rounded animate-pulse" />
-            ) : (
-              `${students.length} active student${students.length !== 1 ? 's' : ''}`
-            )}
+          <h1 className="text-xl lg:text-2xl font-bold text-slate-900">Students</h1>
+          <p className="text-slate-500 text-sm mt-0.5">
+            {loading
+              ? <span className="inline-block h-3 w-24 bg-slate-200 rounded animate-pulse" />
+              : `${students.length} active student${students.length !== 1 ? 's' : ''}`}
           </p>
         </div>
         <Link href="/dashboard/students/new" className="btn-primary flex items-center gap-2 text-sm">
@@ -223,25 +260,22 @@ export default function StudentsPage() {
         </Link>
       </div>
 
-      {/* Search + Class filter */}
-      <div className="flex flex-col gap-3 mb-6">
+      {/* Search + filter */}
+      <div className="flex flex-col gap-3 mb-5">
         <div className="relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
-            type="text"
-            value={query}
+            type="text" value={query}
             onChange={e => handleSearch(e.target.value)}
             placeholder="Search by name..."
             className="input pl-9"
           />
         </div>
 
-        {/* Class filter pills */}
         <div className="flex gap-2 flex-wrap items-center">
           {loading ? (
-            // Skeleton pills while loading
             [...Array(5)].map((_, i) => (
-              <div key={i} className="h-7 w-14 bg-slate-100 rounded-lg animate-pulse" />
+              <div key={i} className="h-7 w-12 bg-slate-100 rounded-lg animate-pulse" />
             ))
           ) : (
             <>
@@ -250,9 +284,7 @@ export default function StudentsPage() {
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                   !classFilter ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                 }`}
-              >
-                All
-              </button>
+              >All</button>
               {classes.map(c => (
                 <button
                   key={c.id}
@@ -271,7 +303,6 @@ export default function StudentsPage() {
 
       {/* Content */}
       {loading ? (
-        // Initial full skeleton
         <div className="flex flex-col gap-6">
           {[...Array(2)].map((_, i) => (
             <div key={i}>
@@ -280,55 +311,49 @@ export default function StudentsPage() {
                 <div className="h-3.5 w-24 bg-slate-200 rounded animate-pulse" />
                 <div className="h-5 w-14 bg-slate-100 rounded-full animate-pulse" />
               </div>
-              <TableSkeleton />
+              {/* Mobile skeleton */}
+              <div className="lg:hidden"><CardSkeleton /></div>
+              {/* Desktop skeleton */}
+              <div className="hidden lg:block"><TableSkeleton /></div>
             </div>
           ))}
         </div>
       ) : filterLoading ? (
-        // Class-switch skeleton — shows the table structure immediately
-        <div className="flex flex-col gap-6">
-          <div>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-1 h-5 bg-brand-200 rounded-full" />
-              <div className="h-3.5 w-32 bg-slate-200 rounded animate-pulse" />
-              <div className="h-5 w-14 bg-slate-100 rounded-full animate-pulse" />
-            </div>
-            <TableSkeleton />
+        <div>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-1 h-5 bg-brand-200 rounded-full" />
+            <div className="h-3.5 w-32 bg-slate-200 rounded animate-pulse" />
           </div>
+          <div className="lg:hidden"><CardSkeleton /></div>
+          <div className="hidden lg:block"><TableSkeleton /></div>
         </div>
       ) : students.length > 0 ? (
         <div className="flex flex-col gap-6">
-          {/* Classes with students */}
           {orderedClasses.map(cls => (
-            <div key={cls.id}>
-              <div className="flex items-center gap-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-1 h-5 bg-brand-600 rounded-full" />
-                  <h2 className="font-semibold text-slate-800 text-sm">
-                    {cls.name}{cls.section ? ` — ${cls.section}` : ''}
-                  </h2>
-                </div>
-                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-                  {(grouped[cls.id] ?? []).length} student{(grouped[cls.id] ?? []).length !== 1 ? 's' : ''}
-                </span>
-              </div>
-              <StudentTable rows={grouped[cls.id] ?? []} avatarBg="bg-brand-100" />
-            </div>
+            <StudentGroup
+              key={cls.id}
+              rows={grouped[cls.id] ?? []}
+              avatarBg="bg-brand-100"
+              groupLabel={`${cls.name}${cls.section ? ` — ${cls.section}` : ''}`}
+              count={(grouped[cls.id] ?? []).length}
+            />
           ))}
-
-          {/* Unassigned */}
           {!classFilter && unassigned.length > 0 && (
             <div>
               <div className="flex items-center gap-3 mb-3">
-                <div className="flex items-center gap-2">
-                  <div className="w-1 h-5 bg-slate-300 rounded-full" />
-                  <h2 className="font-semibold text-slate-500 text-sm">No class assigned</h2>
-                </div>
-                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-                  {unassigned.length}
-                </span>
+                <div className="w-1 h-5 bg-slate-300 rounded-full" />
+                <h2 className="font-semibold text-slate-500 text-sm">No class assigned</h2>
+                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{unassigned.length}</span>
               </div>
-              <StudentTable rows={unassigned} avatarBg="bg-slate-100" />
+              <div className="lg:hidden bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+                {unassigned.map(s => <StudentCard key={s.id} student={s} avatarBg="bg-slate-100" />)}
+              </div>
+              <div className="hidden lg:block table-wrapper">
+                <table className="table">
+                  <thead><tr><th>Name</th><th>Student ID</th><th>Father</th><th>Phone</th><th>Admitted</th><th></th></tr></thead>
+                  <tbody>{unassigned.map(s => <StudentRow key={s.id} student={s} avatarBg="bg-slate-100" />)}</tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>

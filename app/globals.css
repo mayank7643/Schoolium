@@ -121,3 +121,16 @@
     @apply hover:bg-slate-50 transition-colors duration-100;
   }
 }
+
+@layer utilities {
+  /* iPhone safe area — pads bottom nav above home indicator */
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Makes tables scroll horizontally on mobile instead of breaking layout */
+  .table-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}

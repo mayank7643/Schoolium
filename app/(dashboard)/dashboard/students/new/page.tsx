@@ -12,16 +12,10 @@ function formatAadhaar(value: string): string {
   return digits.replace(/(\d{4})(?=\d)/g, '$1 ').trim()
 }
 
-function validateStudentForm(form: {
-  full_name: string
-  parent_phone: string
-  aadhaar_number: string
-}): string | null {
-  if (form.full_name.trim().length < 2) return 'Student name must be at least 2 characters'
-  if (form.parent_phone && !/^\d{10}$/.test(form.parent_phone)) return 'Parent phone must be exactly 10 digits'
-  const aadhaarDigits = form.aadhaar_number.replace(/\s/g, '')
-  if (aadhaarDigits && aadhaarDigits.length !== 12) return 'Aadhaar number must be exactly 12 digits'
-  return null
+function getMaskedAadhaar(value: string): string {
+  const digits = value.replace(/\s/g, '')
+  if (digits.length <= 4) return value
+  return 'XXXX XXXX ' + digits.slice(8, 12)
 }
 
 export default function NewStudentPage() {
@@ -33,6 +27,8 @@ export default function NewStudentPage() {
   const [showAadhaar, setShowAadhaar] = useState(false)
   const [form, setForm] = useState({
     full_name: '',
+    father_name: '',
+    mother_name: '',
     date_of_birth: '',
     gender: '',
     class_id: '',
@@ -58,22 +54,18 @@ export default function NewStudentPage() {
   ) {
     const { name, value } = e.target
 
-    // Phone: digits only, max 10
     if (name === 'parent_phone') {
       const digits = value.replace(/\D/g, '').slice(0, 10)
       setForm({ ...form, parent_phone: digits })
       if (fieldErrors.parent_phone) setFieldErrors({ ...fieldErrors, parent_phone: '' })
       return
     }
-
-    // Aadhaar: digits only, auto-format with spaces
     if (name === 'aadhaar_number') {
       const formatted = formatAadhaar(value)
       setForm({ ...form, aadhaar_number: formatted })
       if (fieldErrors.aadhaar_number) setFieldErrors({ ...fieldErrors, aadhaar_number: '' })
       return
     }
-
     setForm({ ...form, [name]: value })
     if (fieldErrors[name]) setFieldErrors({ ...fieldErrors, [name]: '' })
   }
@@ -89,36 +81,33 @@ export default function NewStudentPage() {
     setFieldErrors((prev) => ({ ...prev, [name]: msg }))
   }
 
-  // Masked display: show XXXX XXXX 1234
-  function getMaskedAadhaar(value: string): string {
-    const digits = value.replace(/\s/g, '')
-    if (digits.length <= 4) return value
-    const masked = 'XXXX XXXX ' + digits.slice(8, 12)
-    return masked
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setError('')
-
-    const validationError = validateStudentForm(form)
-    if (validationError) {
-      setError(validationError)
+    if (form.full_name.trim().length < 2) {
+      setError('Student name is required')
+      return
+    }
+    if (form.parent_phone && form.parent_phone.length !== 10) {
+      setError('Parent phone must be 10 digits')
+      return
+    }
+    const aadhaarDigits = form.aadhaar_number.replace(/\s/g, '')
+    if (aadhaarDigits && aadhaarDigits.length !== 12) {
+      setError('Aadhaar number must be 12 digits')
       return
     }
 
     setLoading(true)
+    setError('')
     const supabase = createClient()
 
     // Check Aadhaar uniqueness
-    const aadhaarDigits = form.aadhaar_number.replace(/\s/g, '')
     if (aadhaarDigits) {
       const { data: existing } = await supabase
         .from('students')
         .select('id')
         .eq('aadhaar_number', aadhaarDigits)
         .maybeSingle()
-
       if (existing) {
         setError('A student with this Aadhaar number already exists')
         setLoading(false)
@@ -131,17 +120,37 @@ export default function NewStudentPage() {
       .select('school_id')
       .single()
 
-    const { error } = await supabase.from('students').insert({
-      ...form,
-      aadhaar_number: aadhaarDigits || null,
-      school_id: profile?.school_id,
-      class_id: form.class_id || null,
+    const schoolId = profile?.school_id
+
+    // Generate student UID atomically via DB function
+    const { data: uidData, error: uidError } = await supabase
+      .rpc('generate_student_uid', { p_school_id: schoolId })
+
+    if (uidError) {
+      setError('Failed to generate student ID: ' + uidError.message)
+      setLoading(false)
+      return
+    }
+
+    const { error: insertError } = await supabase.from('students').insert({
+      full_name: form.full_name,
+      father_name: form.father_name || null,
+      mother_name: form.mother_name || null,
       date_of_birth: form.date_of_birth || null,
       gender: form.gender || null,
+      class_id: form.class_id || null,
+      aadhaar_number: aadhaarDigits || null,
+      address: form.address || null,
+      parent_name: form.father_name || form.parent_name || null,
+      parent_phone: form.parent_phone || null,
+      parent_email: form.parent_email || null,
+      admission_date: form.admission_date,
+      school_id: schoolId,
+      student_uid: uidData,
     })
 
-    if (error) {
-      setError(error.message)
+    if (insertError) {
+      setError(insertError.message)
       setLoading(false)
       return
     }
@@ -161,11 +170,12 @@ export default function NewStudentPage() {
         </Link>
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Add student</h1>
-          <p className="text-slate-500 text-sm">Fill in the student details below</p>
+          <p className="text-slate-500 text-sm">Student ID will be auto-generated on save</p>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-5" noValidate>
+
         {/* Student info */}
         <div className="card flex flex-col gap-4">
           <h2 className="font-semibold text-slate-800">Student information</h2>
@@ -173,14 +183,9 @@ export default function NewStudentPage() {
           <div>
             <label className="label">Full name *</label>
             <input
-              name="full_name"
-              type="text"
-              className={`input ${fieldErrors.full_name ? 'border-red-400' : ''}`}
-              placeholder="Rahul Sharma"
-              value={form.full_name}
-              onChange={handleChange}
-              onBlur={(e) => validateField('full_name', e.target.value)}
-              required
+              name="full_name" type="text" className={`input ${fieldErrors.full_name ? 'border-red-400' : ''}`}
+              placeholder="Rahul Sharma" value={form.full_name} onChange={handleChange}
+              onBlur={(e) => validateField('full_name', e.target.value)} required
             />
             {fieldErrors.full_name && <p className="text-xs text-red-500 mt-1">{fieldErrors.full_name}</p>}
           </div>
@@ -189,11 +194,8 @@ export default function NewStudentPage() {
             <div>
               <label className="label">Date of birth</label>
               <input
-                name="date_of_birth"
-                type="date"
-                className="input"
-                value={form.date_of_birth}
-                onChange={handleChange}
+                name="date_of_birth" type="date" className="input"
+                value={form.date_of_birth} onChange={handleChange}
                 max={new Date().toISOString().split('T')[0]}
               />
             </div>
@@ -223,55 +225,42 @@ export default function NewStudentPage() {
             <div>
               <label className="label">Admission date</label>
               <input
-                name="admission_date"
-                type="date"
-                className="input"
-                value={form.admission_date}
-                onChange={handleChange}
+                name="admission_date" type="date" className="input"
+                value={form.admission_date} onChange={handleChange}
               />
             </div>
           </div>
 
-          {/* Aadhaar with mask toggle */}
+          {/* Aadhaar with mask */}
           <div>
             <label className="label">Aadhaar number</label>
             <div className="relative">
               <input
-                name="aadhaar_number"
-                type="text"
-                inputMode="numeric"
+                name="aadhaar_number" type="text" inputMode="numeric"
                 className={`input pr-10 ${fieldErrors.aadhaar_number ? 'border-red-400' : ''}`}
                 placeholder="XXXX XXXX XXXX"
                 value={showAadhaar ? form.aadhaar_number : (form.aadhaar_number ? getMaskedAadhaar(form.aadhaar_number) : '')}
                 onChange={handleChange}
                 onFocus={() => setShowAadhaar(true)}
-                onBlur={(e) => {
-                  setShowAadhaar(false)
-                  validateField('aadhaar_number', e.target.value)
-                }}
+                onBlur={(e) => { setShowAadhaar(false); validateField('aadhaar_number', e.target.value) }}
                 maxLength={14}
               />
-              <button
-                type="button"
+              <button type="button"
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                 onClick={() => setShowAadhaar(!showAadhaar)}
               >
                 {showAadhaar ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
-            <p className="text-xs text-slate-400 mt-1">12 digits · must be unique · masked for privacy</p>
+            <p className="text-xs text-slate-400 mt-1">12 digits · unique · masked for privacy</p>
             {fieldErrors.aadhaar_number && <p className="text-xs text-red-500">{fieldErrors.aadhaar_number}</p>}
           </div>
 
           <div>
             <label className="label">Address</label>
             <textarea
-              name="address"
-              className="input resize-none"
-              rows={2}
-              placeholder="House no, street, city"
-              value={form.address}
-              onChange={handleChange}
+              name="address" className="input resize-none" rows={2}
+              placeholder="House no, street, city" value={form.address} onChange={handleChange}
             />
           </div>
         </div>
@@ -280,32 +269,31 @@ export default function NewStudentPage() {
         <div className="card flex flex-col gap-4">
           <h2 className="font-semibold text-slate-800">Parent / Guardian</h2>
 
-          <div>
-            <label className="label">Parent name</label>
-            <input
-              name="parent_name"
-              type="text"
-              className="input"
-              placeholder="Suresh Sharma"
-              value={form.parent_name}
-              onChange={handleChange}
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="label">Father's name</label>
+              <input
+                name="father_name" type="text" className="input"
+                placeholder="Suresh Sharma" value={form.father_name} onChange={handleChange}
+              />
+            </div>
+            <div>
+              <label className="label">Mother's name</label>
+              <input
+                name="mother_name" type="text" className="input"
+                placeholder="Sunita Sharma" value={form.mother_name} onChange={handleChange}
+              />
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Phone</label>
               <input
-                name="parent_phone"
-                type="tel"
-                inputMode="numeric"
-                pattern="[0-9]{10}"
+                name="parent_phone" type="tel" inputMode="numeric" pattern="[0-9]{10}"
                 className={`input ${fieldErrors.parent_phone ? 'border-red-400' : ''}`}
-                placeholder="9876543210"
-                value={form.parent_phone}
-                onChange={handleChange}
-                onBlur={(e) => validateField('parent_phone', e.target.value)}
-                maxLength={10}
+                placeholder="9876543210" value={form.parent_phone} onChange={handleChange}
+                onBlur={(e) => validateField('parent_phone', e.target.value)} maxLength={10}
               />
               <p className="text-xs text-slate-400 mt-1">{form.parent_phone.length}/10</p>
               {fieldErrors.parent_phone && <p className="text-xs text-red-500">{fieldErrors.parent_phone}</p>}
@@ -313,31 +301,27 @@ export default function NewStudentPage() {
             <div>
               <label className="label">Email</label>
               <input
-                name="parent_email"
-                type="email"
-                inputMode="email"
-                className="input"
-                placeholder="parent@email.com"
-                value={form.parent_email}
-                onChange={handleChange}
+                name="parent_email" type="email" inputMode="email" className="input"
+                placeholder="parent@email.com" value={form.parent_email} onChange={handleChange}
               />
             </div>
           </div>
         </div>
 
         {error && (
-          <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">
-            {error}
-          </div>
+          <div className="bg-red-50 text-red-600 text-sm px-4 py-3 rounded-lg">{error}</div>
         )}
 
         <div className="flex gap-3">
           <button type="submit" className="btn-primary flex-1 py-2.5" disabled={loading}>
-            {loading ? 'Saving...' : 'Save student'}
+            {loading
+              ? <span className="flex items-center justify-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Saving...
+                </span>
+              : 'Save student'}
           </button>
-          <Link href="/dashboard/students" className="btn-secondary px-6 py-2.5">
-            Cancel
-          </Link>
+          <Link href="/dashboard/students" className="btn-secondary px-6 py-2.5">Cancel</Link>
         </div>
       </form>
     </div>

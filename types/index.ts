@@ -45,11 +45,14 @@ export interface Student {
   school_id: string
   class_id: string | null
   full_name: string
+  student_uid: string | null       // e.g. GN-26-0001
+  father_name: string | null
+  mother_name: string | null
   date_of_birth: string | null
   gender: Gender | null
   aadhaar_number: string | null
   address: string | null
-  parent_name: string | null
+  parent_name: string | null       // kept for backward compat
   parent_phone: string | null
   parent_email: string | null
   photo_url: string | null
@@ -57,7 +60,7 @@ export interface Student {
   admission_date: string
   created_at: string
   // joined
-  class?: Class
+  classes?: Class
 }
 
 export interface Fee {

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { IndianRupee, Plus, X, Printer, Pencil, Trash2, Search, CheckCircle2, AlertCircle } from 'lucide-react'
 
@@ -320,13 +321,29 @@ function StudentLookup({
   students,
   selectedStudentId,
   onSelect,
+  initialUid = '',
 }: {
   students: StudentOption[]
   selectedStudentId: string
   onSelect: (id: string) => void
+  initialUid?: string
 }) {
-  const [uidInput, setUidInput] = useState('')
+  const [uidInput, setUidInput] = useState(initialUid)
   const [lookupError, setLookupError] = useState('')
+
+  // Auto-trigger lookup when initialUid is provided (prefill from student profile)
+  const didAutoLookup = useRef(false)
+  useEffect(() => {
+    if (!initialUid || didAutoLookup.current || students.length === 0) return
+    didAutoLookup.current = true
+    const found = students.find(s => s.student_uid?.toUpperCase() === initialUid.toUpperCase())
+    if (found) {
+      setLookupError('')
+      onSelect(found.id)
+    } else {
+      setLookupError(`No student found with ID "${initialUid.toUpperCase()}"`)
+    }
+  }, [initialUid, students, onSelect])
 
   const selectedStudent = students.find(s => s.id === selectedStudentId) ?? null
 
@@ -439,6 +456,10 @@ function StudentLookup({
 
 export default function FeesPage() {
   const [fees, setFees] = useState<FeeRecord[]>([])
+  const [feesTotal, setFeesTotal] = useState(0)
+  const [feesPage, setFeesPage] = useState(0)
+  const [feesHasMore, setFeesHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [students, setStudents] = useState<StudentOption[]>([])
   const [classes, setClasses] = useState<ClassOption[]>([])
   const [school, setSchool] = useState<SchoolInfo>({ name: '', phone: '' })
@@ -456,22 +477,37 @@ export default function FeesPage() {
     due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '',
   })
 
-  const fetchData = useCallback(async (cls?: string) => {
+  const fetchData = useCallback(async (cls?: string, pageNum = 0, append = false) => {
     const supabase = createClient()
+    const FEE_PAGE = 100
+    const from = pageNum * FEE_PAGE
+    const to   = from + FEE_PAGE - 1
+
     const [feesRes, studentsRes, classesRes, profileRes] = await Promise.all([
       supabase
         .from('fees')
-        .select('*, students(full_name, student_uid, father_name, class_id, classes(name, section))')
-        .order('created_at', { ascending: false }),
-      supabase.from('students').select('id, full_name, student_uid, father_name, class_id, classes(name, section)').eq('is_active', true).order('full_name'),
+        .select('*, students(full_name, student_uid, father_name, class_id, classes(name, section))', { count: 'exact' })
+        .order('created_at', { ascending: false })
+        .range(from, to),
+      supabase.from('students').select('id, full_name, student_uid, father_name, class_id, classes(name, section)').eq('is_active', true).order('full_name').limit(500),
       supabase.from('classes').select('id, name, section').order('name'),
       supabase.from('profiles').select('school_id, schools(name, phone)').single(),
     ])
-    let allFees = (feesRes.data ?? []) as FeeRecord[]
-    if (cls) {
-      allFees = allFees.filter(f => (f.students as any)?.class_id === cls)
+
+    let newFees = (feesRes.data ?? []) as FeeRecord[]
+    const total = feesRes.count ?? 0
+    // client-side class filter (fast — only 100 records max)
+    if (cls) newFees = newFees.filter(f => (f.students as any)?.class_id === cls)
+
+    if (append) {
+      setFees(prev => [...prev, ...newFees])
+    } else {
+      setFees(newFees)
     }
-    setFees(allFees)
+    setFeesTotal(total)
+    setFeesPage(pageNum)
+    setFeesHasMore(from + newFees.length < total)
+
     setStudents((studentsRes.data ?? []) as any as StudentOption[])
     setClasses((classesRes.data ?? []) as ClassOption[])
     const s = (profileRes.data as any)?.schools
@@ -482,10 +518,31 @@ export default function FeesPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // ── Prefill: read ?student_uid= query param set by student profile page ──────
+  const searchParams = useSearchParams()
+  const prefillUid = searchParams.get('student_uid') ?? ''
+
+  // Auto-open modal when arriving via prefill link
+  const prefillHandled = useRef(false)
+  useEffect(() => {
+    if (!prefillUid || prefillHandled.current || loading) return
+    prefillHandled.current = true
+    setForm({ student_id: '', amount: '', fee_type: 'tuition', due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '' })
+    setError('')
+    setShowModal(true)
+  }, [prefillUid, loading])
+
+
+  async function handleLoadMoreFees() {
+    setLoadingMore(true)
+    await fetchData(classFilter || undefined, feesPage + 1, true)
+    setLoadingMore(false)
+  }
+
   async function handleClassFilter(cls: string) {
     setClassFilter(cls)
     setClassLoading(true)
-    await fetchData(cls)
+    await fetchData(cls || undefined, 0, false)
   }
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) {
@@ -539,7 +596,11 @@ export default function FeesPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Fees</h1>
-          <p className="text-slate-500 text-sm mt-1">{fees.length} records{classFilter ? ' in this class' : ''}</p>
+          <p className="text-slate-500 text-sm mt-1">
+            {feesTotal > fees.length
+              ? `Showing ${fees.length} of ${feesTotal} records`
+              : `${fees.length} record${fees.length !== 1 ? 's' : ''}${classFilter ? ' in this class' : ''}`}
+          </p>
         </div>
         <button onClick={handleModalOpen} className="btn-primary flex items-center gap-2 text-sm">
           <Plus size={16} /> Record payment
@@ -699,6 +760,7 @@ export default function FeesPage() {
                 students={students}
                 selectedStudentId={form.student_id}
                 onSelect={(id) => setForm({ ...form, student_id: id })}
+                initialUid={prefillUid}
               />
 
               <div className="grid grid-cols-2 gap-4">
@@ -761,8 +823,24 @@ export default function FeesPage() {
         </div>
       )}
 
+      {/* Load more fees */}
+      {feesHasMore && !loading && !classLoading && (
+        <div className="mt-4 flex flex-col items-center gap-2">
+          <p className="text-xs text-slate-400">Showing {fees.length} of {feesTotal} records</p>
+          <button
+            onClick={handleLoadMoreFees}
+            disabled={loadingMore}
+            className="btn-secondary flex items-center gap-2 text-sm px-6"
+          >
+            {loadingMore
+              ? <><span className="w-3.5 h-3.5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />Loading...</>
+              : <>Load more records</>}
+          </button>
+        </div>
+      )}
+
       {selectedFee && <ReceiptModal fee={selectedFee} school={school} onClose={() => setSelectedFee(null)} />}
-      {editingFee && <EditFeeModal fee={editingFee} onClose={() => setEditingFee(null)} onSaved={() => { setEditingFee(null); fetchData(classFilter) }} />}
+      {editingFee && <EditFeeModal fee={editingFee} onClose={() => setEditingFee(null)} onSaved={() => { setEditingFee(null); fetchData(classFilter || undefined) }} />}
     </div>
   )
 }

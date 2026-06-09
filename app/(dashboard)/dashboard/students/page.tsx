@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import Link from 'next/link'
-import { Users, Plus, Search } from 'lucide-react'
+import { Users, Plus, Search, ChevronDown } from 'lucide-react'
+
+const PAGE_SIZE = 50
 
 interface ClassItem {
   id: string
@@ -37,8 +39,14 @@ function sortClasses(classes: ClassItem[]): ClassItem[] {
   })
 }
 
-// ── Mobile card for one student ───────────────────────────────────────────────
-function StudentCard({ student, avatarBg }: { student: StudentItem; avatarBg: string }) {
+// ── Avatar colour helper ───────────────────────────────────────────────────────
+function avatarBgForClass(classId: string | null): string {
+  return classId ? 'bg-brand-100' : 'bg-slate-100'
+}
+
+// ── Mobile card ───────────────────────────────────────────────────────────────
+function StudentCard({ student }: { student: StudentItem }) {
+  const avatarBg = avatarBgForClass(student.class_id)
   return (
     <Link
       href={`/dashboard/students/${student.id}`}
@@ -70,7 +78,9 @@ function StudentCard({ student, avatarBg }: { student: StudentItem; avatarBg: st
 }
 
 // ── Desktop table row ─────────────────────────────────────────────────────────
-function StudentRow({ student, avatarBg }: { student: StudentItem; avatarBg: string }) {
+// No avatarBg prop needed — derived from class_id directly
+function StudentRow({ student }: { student: StudentItem }) {
+  const avatarBg = avatarBgForClass(student.class_id)
   return (
     <tr>
       <td>
@@ -104,11 +114,32 @@ function StudentRow({ student, avatarBg }: { student: StudentItem; avatarBg: str
   )
 }
 
-// ── Skeleton ──────────────────────────────────────────────────────────────────
+// ── Group separator row — sits inside the shared <tbody> ──────────────────────
+function GroupSeparatorRow({ label, count, accent }: { label: string; count: number; accent: string }) {
+  return (
+    <tr>
+      <td
+        colSpan={6}
+        className="px-4 pt-5 pb-2 bg-transparent"
+        style={{ borderTop: 'none' }}
+      >
+        <div className="flex items-center gap-3">
+          <div className={`w-1 h-5 ${accent} rounded-full`} />
+          <span className="font-semibold text-slate-800 text-sm">{label}</span>
+          <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+            {count} student{count !== 1 ? 's' : ''}
+          </span>
+        </div>
+      </td>
+    </tr>
+  )
+}
+
+// ── Skeletons ─────────────────────────────────────────────────────────────────
 function CardSkeleton() {
   return (
     <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-      {[...Array(3)].map((_, i) => (
+      {[...Array(4)].map((_, i) => (
         <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-slate-50 last:border-0">
           <div className="w-9 h-9 bg-slate-100 rounded-full animate-pulse shrink-0" />
           <div className="flex-1">
@@ -124,14 +155,20 @@ function CardSkeleton() {
 function TableSkeleton() {
   return (
     <div className="table-wrapper">
-      <table className="table">
+      <table className="table" style={{ tableLayout: 'fixed', width: '100%' }}>
+        <colgroup>
+          <col style={{ width: '28%' }} />
+          <col style={{ width: '14%' }} />
+          <col style={{ width: '20%' }} />
+          <col style={{ width: '16%' }} />
+          <col style={{ width: '14%' }} />
+          <col style={{ width: '8%' }} />
+        </colgroup>
         <thead>
-          <tr>
-            <th>Name</th><th>Student ID</th><th>Father</th><th>Phone</th><th>Admitted</th><th></th>
-          </tr>
+          <tr><th>Name</th><th>Student ID</th><th>Father</th><th>Phone</th><th>Admitted</th><th></th></tr>
         </thead>
         <tbody>
-          {[...Array(3)].map((_, i) => (
+          {[...Array(4)].map((_, i) => (
             <tr key={i}>
               <td><div className="flex items-center gap-3"><div className="w-8 h-8 bg-slate-100 rounded-full animate-pulse shrink-0" /><div className="h-3.5 w-28 bg-slate-100 rounded animate-pulse" /></div></td>
               <td><div className="h-3.5 w-20 bg-slate-100 rounded animate-pulse" /></td>
@@ -147,92 +184,98 @@ function TableSkeleton() {
   )
 }
 
-// ── Renders either mobile cards or desktop table depending on screen ───────────
-function StudentGroup({
-  rows, avatarBg, groupLabel, count,
-}: {
-  rows: StudentItem[]
-  avatarBg: string
-  groupLabel: string
-  count: number
-}) {
-  return (
-    <div>
-      {/* Group header */}
-      <div className="flex items-center gap-3 mb-3">
-        <div className="w-1 h-5 bg-brand-600 rounded-full" />
-        <h2 className="font-semibold text-slate-800 text-sm">{groupLabel}</h2>
-        <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
-          {count} student{count !== 1 ? 's' : ''}
-        </span>
-      </div>
-
-      {/* Mobile: card list */}
-      <div className="lg:hidden bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-        {rows.map(s => <StudentCard key={s.id} student={s} avatarBg={avatarBg} />)}
-      </div>
-
-      {/* Desktop: full table */}
-      <div className="hidden lg:block table-wrapper">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Name</th><th>Student ID</th><th>Father</th><th>Phone</th><th>Admitted</th><th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(s => <StudentRow key={s.id} student={s} avatarBg={avatarBg} />)}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-}
-
+// ─────────────────────────────────────────────────────────────────────────────
 export default function StudentsPage() {
-  const [classes, setClasses]           = useState<ClassItem[]>([])
-  const [students, setStudents]         = useState<StudentItem[]>([])
-  const [loading, setLoading]           = useState(true)
+  const [classes, setClasses]             = useState<ClassItem[]>([])
+  const [students, setStudents]           = useState<StudentItem[]>([])
+  const [totalCount, setTotalCount]       = useState(0)
+  const [page, setPage]                   = useState(0)
+  const [hasMore, setHasMore]             = useState(false)
+  const [loadingMore, setLoadingMore]     = useState(false)
+  const [loading, setLoading]             = useState(true)
   const [filterLoading, setFilterLoading] = useState(false)
-  const [query, setQuery]               = useState('')
-  const [classFilter, setClassFilter]   = useState('')
+  const [query, setQuery]                 = useState('')
+  const [classFilter, setClassFilter]     = useState('')
 
-  const fetchData = useCallback(async (cls: string, q: string) => {
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── Core fetch ────────────────────────────────────────────────────────────
+  const fetchStudents = useCallback(async (
+    cls: string,
+    q: string,
+    pageNum: number,
+    append: boolean
+  ) => {
     const supabase = createClient()
-    const [classesRes, studentsRes] = await Promise.all([
-      supabase.from('classes').select('id, name, section').order('name'),
-      (async () => {
-        let sq = supabase
-          .from('students')
-          .select('id, full_name, student_uid, father_name, parent_phone, admission_date, class_id, classes(id, name, section)')
-          .eq('is_active', true)
-          .order('full_name')
-        if (q)   sq = sq.ilike('full_name', `%${q}%`)
-        if (cls) sq = sq.eq('class_id', cls)
-        return sq
-      })(),
-    ])
-    setClasses(sortClasses(classesRes.data ?? []))
-    setStudents((studentsRes.data ?? []) as any as StudentItem[])
-    setLoading(false)
-    setFilterLoading(false)
+    const from = pageNum * PAGE_SIZE
+    const to   = from + PAGE_SIZE - 1
+
+    let sq = supabase
+      .from('students')
+      .select('id, full_name, student_uid, father_name, parent_phone, admission_date, class_id, classes(id, name, section)', { count: 'exact' })
+      .eq('is_active', true)
+      .order('full_name')
+      .range(from, to)
+
+    if (q)   sq = sq.ilike('full_name', `%${q}%`)
+    if (cls) sq = sq.eq('class_id', cls)
+
+    const { data, count } = await sq
+
+    const rows = (data ?? []) as any as StudentItem[]
+    const total = count ?? 0
+
+    if (append) {
+      setStudents(prev => [...prev, ...rows])
+    } else {
+      setStudents(rows)
+    }
+
+    setTotalCount(total)
+    setHasMore(from + rows.length < total)
+    setPage(pageNum)
   }, [])
 
-  useEffect(() => { fetchData('', '') }, [fetchData])
+  // ── Initial load ──────────────────────────────────────────────────────────
+  const initialLoad = useCallback(async () => {
+    const supabase = createClient()
+    const [classesRes] = await Promise.all([
+      supabase.from('classes').select('id, name, section').order('name'),
+      fetchStudents('', '', 0, false),
+    ])
+    setClasses(sortClasses(classesRes.data ?? []))
+    setLoading(false)
+  }, [fetchStudents])
 
+  useEffect(() => { initialLoad() }, [initialLoad])
+
+  // ── Class filter ──────────────────────────────────────────────────────────
   async function handleClassFilter(cls: string) {
     setClassFilter(cls)
     setFilterLoading(true)
-    await fetchData(cls, query)
+    await fetchStudents(cls, query, 0, false)
+    setFilterLoading(false)
   }
 
-  async function handleSearch(q: string) {
+  // ── Search — debounced 350ms ──────────────────────────────────────────────
+  function handleSearch(q: string) {
     setQuery(q)
-    setFilterLoading(true)
-    await fetchData(classFilter, q)
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(async () => {
+      setFilterLoading(true)
+      await fetchStudents(classFilter, q, 0, false)
+      setFilterLoading(false)
+    }, 350)
   }
 
-  // Group
+  // ── Load more ─────────────────────────────────────────────────────────────
+  async function handleLoadMore() {
+    setLoadingMore(true)
+    await fetchStudents(classFilter, query, page + 1, true)
+    setLoadingMore(false)
+  }
+
+  // ── Group by class ────────────────────────────────────────────────────────
   const grouped: Record<string, StudentItem[]> = {}
   const unassigned: StudentItem[] = []
   students.forEach(s => {
@@ -243,6 +286,106 @@ export default function StudentsPage() {
   })
   const orderedClasses = classes.filter(c => grouped[c.id]?.length > 0)
 
+  // ── Shared desktop table — ONE table, all groups ──────────────────────────
+  // Class groups become separator rows inside a single <tbody>.
+  // The shared <colgroup> locks every column to the same width across all groups.
+  // Mobile card layout is completely separate and unaffected.
+  function DesktopTable() {
+    return (
+      <div className="hidden lg:block table-wrapper">
+        <table className="table" style={{ tableLayout: 'fixed', width: '100%' }}>
+          <colgroup>
+            <col style={{ width: '28%' }} /> {/* Name */}
+            <col style={{ width: '14%' }} /> {/* Student ID */}
+            <col style={{ width: '20%' }} /> {/* Father */}
+            <col style={{ width: '16%' }} /> {/* Phone */}
+            <col style={{ width: '14%' }} /> {/* Admitted */}
+            <col style={{ width: '8%' }} />  {/* View */}
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Student ID</th>
+              <th>Father</th>
+              <th>Phone</th>
+              <th>Admitted</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {/* Named class groups */}
+            {orderedClasses.map(cls => (
+              <>
+                <GroupSeparatorRow
+                  key={`sep-${cls.id}`}
+                  label={`${cls.name}${cls.section ? ` — ${cls.section}` : ''}`}
+                  count={(grouped[cls.id] ?? []).length}
+                  accent="bg-brand-600"
+                />
+                {(grouped[cls.id] ?? []).map(s => (
+                  <StudentRow key={s.id} student={s} />
+                ))}
+              </>
+            ))}
+
+            {/* Unassigned group */}
+            {!classFilter && unassigned.length > 0 && (
+              <>
+                <GroupSeparatorRow
+                  key="sep-unassigned"
+                  label="No class assigned"
+                  count={unassigned.length}
+                  accent="bg-slate-300"
+                />
+                {unassigned.map(s => (
+                  <StudentRow key={s.id} student={s} />
+                ))}
+              </>
+            )}
+          </tbody>
+        </table>
+      </div>
+    )
+  }
+
+  // ── Mobile card groups ────────────────────────────────────────────────────
+  function MobileGroups() {
+    return (
+      <div className="lg:hidden flex flex-col gap-6">
+        {orderedClasses.map(cls => (
+          <div key={cls.id}>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-1 h-5 bg-brand-600 rounded-full" />
+              <h2 className="font-semibold text-slate-800 text-sm">
+                {cls.name}{cls.section ? ` — ${cls.section}` : ''}
+              </h2>
+              <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                {(grouped[cls.id] ?? []).length} student{(grouped[cls.id] ?? []).length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              {(grouped[cls.id] ?? []).map(s => <StudentCard key={s.id} student={s} />)}
+            </div>
+          </div>
+        ))}
+
+        {!classFilter && unassigned.length > 0 && (
+          <div>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-1 h-5 bg-slate-300 rounded-full" />
+              <h2 className="font-semibold text-slate-500 text-sm">No class assigned</h2>
+              <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{unassigned.length}</span>
+            </div>
+            <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
+              {unassigned.map(s => <StudentCard key={s.id} student={s} />)}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <div className="max-w-5xl mx-auto">
       {/* Header */}
@@ -252,7 +395,9 @@ export default function StudentsPage() {
           <p className="text-slate-500 text-sm mt-0.5">
             {loading
               ? <span className="inline-block h-3 w-24 bg-slate-200 rounded animate-pulse" />
-              : `${students.length} active student${students.length !== 1 ? 's' : ''}`}
+              : totalCount > students.length
+              ? `Showing ${students.length} of ${totalCount} students`
+              : `${totalCount} active student${totalCount !== 1 ? 's' : ''}`}
           </p>
         </div>
         <Link href="/dashboard/students/new" className="btn-primary flex items-center gap-2 text-sm">
@@ -265,11 +410,17 @@ export default function StudentsPage() {
         <div className="relative">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
           <input
-            type="text" value={query}
+            type="text"
+            value={query}
             onChange={e => handleSearch(e.target.value)}
             placeholder="Search by name..."
             className="input pl-9"
           />
+          {query && filterLoading && (
+            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+              <span className="w-3.5 h-3.5 border-2 border-brand-400 border-t-transparent rounded-full animate-spin block" />
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2 flex-wrap items-center">
@@ -286,9 +437,7 @@ export default function StudentsPage() {
                 }`}
               >All</button>
               {classes.map(c => (
-                <button
-                  key={c.id}
-                  onClick={() => handleClassFilter(c.id)}
+                <button key={c.id} onClick={() => handleClassFilter(c.id)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
                     classFilter === c.id ? 'bg-brand-600 text-white border-brand-600' : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                   }`}
@@ -311,14 +460,12 @@ export default function StudentsPage() {
                 <div className="h-3.5 w-24 bg-slate-200 rounded animate-pulse" />
                 <div className="h-5 w-14 bg-slate-100 rounded-full animate-pulse" />
               </div>
-              {/* Mobile skeleton */}
               <div className="lg:hidden"><CardSkeleton /></div>
-              {/* Desktop skeleton */}
               <div className="hidden lg:block"><TableSkeleton /></div>
             </div>
           ))}
         </div>
-      ) : filterLoading ? (
+      ) : filterLoading && students.length === 0 ? (
         <div>
           <div className="flex items-center gap-3 mb-3">
             <div className="w-1 h-5 bg-brand-200 rounded-full" />
@@ -328,35 +475,31 @@ export default function StudentsPage() {
           <div className="hidden lg:block"><TableSkeleton /></div>
         </div>
       ) : students.length > 0 ? (
-        <div className="flex flex-col gap-6">
-          {orderedClasses.map(cls => (
-            <StudentGroup
-              key={cls.id}
-              rows={grouped[cls.id] ?? []}
-              avatarBg="bg-brand-100"
-              groupLabel={`${cls.name}${cls.section ? ` — ${cls.section}` : ''}`}
-              count={(grouped[cls.id] ?? []).length}
-            />
-          ))}
-          {!classFilter && unassigned.length > 0 && (
-            <div>
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-1 h-5 bg-slate-300 rounded-full" />
-                <h2 className="font-semibold text-slate-500 text-sm">No class assigned</h2>
-                <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{unassigned.length}</span>
-              </div>
-              <div className="lg:hidden bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
-                {unassigned.map(s => <StudentCard key={s.id} student={s} avatarBg="bg-slate-100" />)}
-              </div>
-              <div className="hidden lg:block table-wrapper">
-                <table className="table">
-                  <thead><tr><th>Name</th><th>Student ID</th><th>Father</th><th>Phone</th><th>Admitted</th><th></th></tr></thead>
-                  <tbody>{unassigned.map(s => <StudentRow key={s.id} student={s} avatarBg="bg-slate-100" />)}</tbody>
-                </table>
-              </div>
+        <>
+          {/* Mobile — separate card groups per class */}
+          <MobileGroups />
+
+          {/* Desktop — one single table, all groups, locked column widths */}
+          <DesktopTable />
+
+          {/* Load more */}
+          {hasMore && (
+            <div className="mt-6 flex flex-col items-center gap-2">
+              <p className="text-xs text-slate-400">
+                Showing {students.length} of {totalCount} students
+              </p>
+              <button
+                onClick={handleLoadMore}
+                disabled={loadingMore}
+                className="btn-secondary flex items-center gap-2 text-sm px-6"
+              >
+                {loadingMore
+                  ? <><span className="w-3.5 h-3.5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />Loading...</>
+                  : <><ChevronDown size={15} />Load more students</>}
+              </button>
             </div>
           )}
-        </div>
+        </>
       ) : (
         <div className="card flex flex-col items-center justify-center py-16 text-center">
           <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mb-4">

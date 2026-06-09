@@ -346,7 +346,12 @@ export default function StudentDetailPage() {
           <div className="card">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-slate-800">Fee history</h3>
-              <Link href="/dashboard/fees" className="text-sm text-brand-600 hover:underline">Record payment</Link>
+              <Link
+                href={`/dashboard/fees${student.student_uid ? `?student_uid=${student.student_uid}` : ''}`}
+                className="btn-primary flex items-center gap-1.5 text-xs py-1.5 px-3"
+              >
+                <IndianRupee size={13} /> Record payment
+              </Link>
             </div>
             {fees.length > 0 ? (
               <div className="flex flex-col gap-2">

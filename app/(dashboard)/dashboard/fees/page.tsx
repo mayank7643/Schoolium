@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { IndianRupee, Plus, X, Printer, Pencil, Trash2, Search, CheckCircle2, AlertCircle } from 'lucide-react'
@@ -24,6 +25,7 @@ interface FeeRecord {
   receipt_number: string | null
   paid_date: string | null
   due_date: string | null
+  period_months: string[] | null  // Postgres TEXT[] e.g. ['2026-05','2026-06','2026-07']
   notes: string | null
   created_at: string
   students?: {
@@ -36,6 +38,23 @@ interface FeeRecord {
 
 interface ClassOption { id: string; name: string; section: string | null }
 interface SchoolInfo { name: string; phone: string }
+
+// Format period_months array → "May, Jun, Jul 2026" or "May 2025 – Jul 2026" if spans years
+function fmtPeriods(periods: string[] | null | undefined): string {
+  if (!periods || periods.length === 0) return ''
+  const sorted = [...periods].sort()
+  const fmt = (ym: string, opts: Intl.DateTimeFormatOptions) =>
+    new Date(ym + '-01T00:00:00').toLocaleDateString('en-IN', opts)
+  if (sorted.length === 1)
+    return fmt(sorted[0], { month: 'long', year: 'numeric' })
+  const firstYear = sorted[0].split('-')[0]
+  const lastYear  = sorted[sorted.length - 1].split('-')[0]
+  if (firstYear === lastYear) {
+    const monthNames = sorted.map(ym => fmt(ym, { month: 'short' }))
+    return `${monthNames.join(', ')} ${firstYear}`
+  }
+  return `${fmt(sorted[0], { month: 'short', year: 'numeric' })} – ${fmt(sorted[sorted.length - 1], { month: 'short', year: 'numeric' })}`
+}
 
 function generateReceiptNumber(): string {
   const d = new Date()
@@ -112,6 +131,7 @@ function ReceiptModal({
     ${className ? `<tr><td class="label">Class</td><td class="value">${className}</td></tr>` : ''}
     ${fee.students?.father_name ? `<tr><td class="label">Father's Name</td><td class="value">${fee.students.father_name}</td></tr>` : ''}
     <tr><td class="label">Fee Type</td><td class="value">${fee.fee_type}</td></tr>
+    ${fee.period_months?.length ? `<tr><td class="label">Fee Period</td><td class="value">${fmtPeriods(fee.period_months)}</td></tr>` : ''}
     <tr><td class="label">Status</td><td class="value"><span class="badge">${fee.status}</span></td></tr>
     ${fee.payment_method ? `<tr><td class="label">Payment Via</td><td class="value">${fee.payment_method.replace('_', ' ')}</td></tr>` : ''}
     <tr><td class="label">Date</td><td class="value">${feeDate}</td></tr>
@@ -166,6 +186,7 @@ function ReceiptModal({
                 ...(className ? [['Class', className]] : []),
                 ...(fee.students?.father_name ? [["Father's Name", fee.students.father_name]] : []),
                 ['Fee Type', fee.fee_type],
+                ...(fee.period_months?.length ? [['Fee Period', fmtPeriods(fee.period_months)]] : []),
                 ['Status', fee.status],
                 ...(fee.payment_method ? [['Payment Via', fee.payment_method.replace('_', ' ')]] : []),
                 ['Date', feeDate],
@@ -212,6 +233,7 @@ function EditFeeModal({
   const [form, setForm] = useState({
     amount: String(fee.amount),
     fee_type: fee.fee_type,
+    period_months: fee.period_months ?? [],
     status: fee.status,
     payment_method: fee.payment_method ?? '',
     due_date: fee.due_date ?? '',
@@ -235,6 +257,7 @@ function EditFeeModal({
     const { error } = await supabase.from('fees').update({
       amount: parseFloat(form.amount),
       fee_type: form.fee_type,
+      period_months: (form.period_months as string[]).length > 0 ? form.period_months : null,
       status: form.status,
       payment_method: form.payment_method || null,
       due_date: form.due_date || null,
@@ -270,6 +293,11 @@ function EditFeeModal({
               </select>
             </div>
           </div>
+          {/* Fee period — MonthPicker lets admin correct or add months */}
+          <MonthPicker
+            selected={form.period_months as string[]}
+            onChange={(months) => setForm({ ...form, period_months: months })}
+          />
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="label">Status *</label>
@@ -454,6 +482,83 @@ function StudentLookup({
   )
 }
 
+// ── MonthPicker — tap to select/deselect months, supports multi-month payment ──
+// Renders a 12-month grid anchored to the current academic year.
+// "Selected" months are highlighted; tapping toggles them.
+// Selecting 3 months + submit creates 3 separate fee records (one per month).
+function MonthPicker({
+  selected,
+  onChange,
+}: {
+  selected: string[]        // array of 'YYYY-MM' strings
+  onChange: (months: string[]) => void
+}) {
+  // Show the last 12 months rolling from today so admin can record past dues
+  const today = new Date()
+  const months: { label: string; value: string }[] = []
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    const label = d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' })
+    months.push({ label, value })
+  }
+
+  function toggle(value: string) {
+    if (selected.includes(value)) {
+      onChange(selected.filter(m => m !== value))
+    } else {
+      onChange([...selected, value].sort())
+    }
+  }
+
+  const totalMonths = selected.length
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <label className="label mb-0">
+          Fee period
+          <span className="text-slate-400 font-normal ml-1">(tap to select months)</span>
+        </label>
+        {totalMonths > 0 && (
+          <span className="text-xs text-brand-600 font-medium">
+            {totalMonths} month{totalMonths > 1 ? 's' : ''} selected
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-4 gap-1.5">
+        {months.map(({ label, value }) => {
+          const isSelected = selected.includes(value)
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => toggle(value)}
+              className={`py-1.5 px-1 rounded-lg text-xs font-medium border transition-colors text-center ${
+                isSelected
+                  ? 'bg-brand-600 text-white border-brand-600'
+                  : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+            >
+              {label}
+            </button>
+          )
+        })}
+      </div>
+      {totalMonths > 1 && (
+        <p className="text-xs text-brand-600 mt-1.5 bg-brand-50 px-2.5 py-1.5 rounded-lg">
+          One record and one receipt will be created showing all {totalMonths} months.
+        </p>
+      )}
+      {totalMonths === 0 && (
+        <p className="text-xs text-slate-400 mt-1">
+          Leave unselected if this payment doesn't correspond to a specific month.
+        </p>
+      )}
+    </div>
+  )
+}
+
 export default function FeesPage() {
   const [fees, setFees] = useState<FeeRecord[]>([])
   const [feesTotal, setFeesTotal] = useState(0)
@@ -474,6 +579,7 @@ export default function FeesPage() {
   const [classFilter, setClassFilter] = useState('')
   const [form, setForm] = useState({
     student_id: '', amount: '', fee_type: 'tuition',
+    period_months: [] as string[],   // array of 'YYYY-MM' strings, one record per month on submit
     due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '',
   })
 
@@ -527,7 +633,7 @@ export default function FeesPage() {
   useEffect(() => {
     if (!prefillUid || prefillHandled.current || loading) return
     prefillHandled.current = true
-    setForm({ student_id: '', amount: '', fee_type: 'tuition', due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '' })
+    setForm({ student_id: '', amount: '', fee_type: 'tuition', period_months: [], due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '' })
     setError('')
     setShowModal(true)
   }, [prefillUid, loading])
@@ -552,7 +658,7 @@ export default function FeesPage() {
   }
 
   function handleModalOpen() {
-    setForm({ student_id: '', amount: '', fee_type: 'tuition', due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '' })
+    setForm({ student_id: '', amount: '', fee_type: 'tuition', period_months: [], due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '' })
     setError('')
     setShowModal(true)
   }
@@ -564,18 +670,23 @@ export default function FeesPage() {
     setSaving(true); setError('')
     const supabase = createClient()
     const { data: profile } = await supabase.from('profiles').select('school_id').single()
+
     const { error } = await supabase.from('fees').insert({
-      ...form,
+      student_id: form.student_id,
       school_id: profile?.school_id,
       amount: parseFloat(form.amount),
-      receipt_number: generateReceiptNumber(),
+      fee_type: form.fee_type,
+      status: form.status,
+      payment_method: form.payment_method || null,
       due_date: form.due_date || null,
       paid_date: form.status === 'paid' ? (form.paid_date || new Date().toISOString().split('T')[0]) : null,
-      payment_method: form.payment_method || null,
+      notes: form.notes || null,
+      period_months: form.period_months.length > 0 ? form.period_months : null,
+      receipt_number: generateReceiptNumber(),
     })
     if (error) { setError(error.message); setSaving(false); return }
     setShowModal(false)
-    setForm({ student_id: '', amount: '', fee_type: 'tuition', due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '' })
+    setForm({ student_id: '', amount: '', fee_type: 'tuition', period_months: [], due_date: '', paid_date: '', status: 'pending', payment_method: '', notes: '' })
     fetchData(classFilter)
     setSaving(false)
   }
@@ -602,9 +713,14 @@ export default function FeesPage() {
               : `${fees.length} record${fees.length !== 1 ? 's' : ''}${classFilter ? ' in this class' : ''}`}
           </p>
         </div>
-        <button onClick={handleModalOpen} className="btn-primary flex items-center gap-2 text-sm">
-          <Plus size={16} /> Record payment
-        </button>
+        <div className="flex items-center gap-2">
+          <Link href="/dashboard/fees/summary" className="btn-secondary flex items-center gap-2 text-sm">
+            Class summary
+          </Link>
+          <button onClick={handleModalOpen} className="btn-primary flex items-center gap-2 text-sm">
+            <Plus size={16} /> Record payment
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -687,7 +803,14 @@ export default function FeesPage() {
                     <td className="text-slate-500 text-xs">
                       {cls ? `${cls.name}${cls.section ? ' - ' + cls.section : ''}` : <span className="text-slate-300">—</span>}
                     </td>
-                    <td className="capitalize">{fee.fee_type}</td>
+                    <td>
+                      <span className="capitalize">{fee.fee_type}</span>
+                      {fee.period_months?.length ? (
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          {fmtPeriods(fee.period_months)}
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="font-semibold">₹{Number(fee.amount).toLocaleString('en-IN')}</td>
                     <td>
                       <span className={fee.status === 'paid' ? 'badge-green' : fee.status === 'overdue' ? 'badge-red' : 'badge-yellow'}>
@@ -778,6 +901,12 @@ export default function FeesPage() {
                   </select>
                 </div>
               </div>
+
+              {/* Multi-month period selector */}
+              <MonthPicker
+                selected={form.period_months}
+                onChange={(months) => setForm({ ...form, period_months: months })}
+              />
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="label">Status *</label>

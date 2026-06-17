@@ -1,0 +1,19 @@
+-- Step 1: Drop the old check constraint
+ALTER TABLE profiles
+  DROP CONSTRAINT profiles_role_check;
+
+-- Step 2: Recreate it with 'guard' included
+ALTER TABLE profiles
+  ADD CONSTRAINT profiles_role_check
+  CHECK (role IN ('super_admin', 'school_admin', 'teacher', 'guard', 'parent'));
+
+-- Step 3: Now run the original UPDATE
+UPDATE profiles
+SET
+  role      = 'guard',
+  school_id = '50922d20-08aa-44bd-8370-25880d31edad',
+  gate      = 'Main Gate',
+  is_active = true
+WHERE id = (
+  SELECT id FROM auth.users WHERE email = 'maingate@yourschool.com'
+);

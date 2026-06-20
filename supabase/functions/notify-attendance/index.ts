@@ -201,7 +201,7 @@ Deno.serve(async (req) => {
     // ── STEP 4: Service role client for privileged reads/writes ───────────────
     const admin = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+      Deno.env.get('SERVICE_ROLE_KEY')!,
     )
 
     // ── STEP 5: Fetch student + school in parallel ────────────────────────────

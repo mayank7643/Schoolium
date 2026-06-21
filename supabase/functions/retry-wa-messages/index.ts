@@ -185,7 +185,7 @@ Deno.serve(async (req) => {
       const timeIST = new Date().toLocaleTimeString('en-IN', {
         timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true,
       })
-      const params    = [student.full_name, timeIST, school.name]
+      const params    = [student.full_name, school.name, timeIST]
       const rawPhone  = testMode ? testRecipient : row.parent_phone
       const recipient = toE164(rawPhone)
 

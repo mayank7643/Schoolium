@@ -310,7 +310,7 @@ Deno.serve(async (req) => {
     // Template: student_exit_alert
     //   Body: "{{1}} has left school at {{2}}. — {{3}}"
     const timeIST = formatTimeIST(scan_time)
-    const params  = [student.full_name, timeIST, school.name]
+    const params  = [student.full_name, school.name, timeIST]
 
     // ── STEP 11: Resolve recipient ────────────────────────────────────────────
     const testMode = Deno.env.get('WHATSAPP_TEST_MODE') === 'true'

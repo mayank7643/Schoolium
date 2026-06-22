@@ -1,5 +1,8 @@
 'use client'
 
+// FILE: components/layout/Sidebar.tsx
+// Updated: added Attendance nav item
+
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
@@ -8,6 +11,7 @@ import {
   Users,
   IndianRupee,
   BookOpen,
+  CalendarCheck,
   LogOut,
   School,
   X,
@@ -16,10 +20,11 @@ import {
 import { useState, useEffect } from 'react'
 
 const navItems = [
-  { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { label: 'Students',  href: '/dashboard/students', icon: Users },
-  { label: 'Fees',      href: '/dashboard/fees', icon: IndianRupee },
-  { label: 'Classes',   href: '/dashboard/classes', icon: BookOpen },
+  { label: 'Dashboard',  href: '/dashboard',            icon: LayoutDashboard },
+  { label: 'Students',   href: '/dashboard/students',   icon: Users           },
+  { label: 'Fees',       href: '/dashboard/fees',       icon: IndianRupee     },
+  { label: 'Classes',    href: '/dashboard/classes',    icon: BookOpen        },
+  { label: 'Attendance', href: '/dashboard/attendance', icon: CalendarCheck   },
 ]
 
 interface SidebarProps {
@@ -31,14 +36,12 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ profile }: SidebarProps) {
-  const pathname  = usePathname()
-  const router    = useRouter()
+  const pathname = usePathname()
+  const router   = useRouter()
   const [open, setOpen] = useState(false)
 
-  // Close drawer whenever route changes
   useEffect(() => { setOpen(false) }, [pathname])
 
-  // Prevent body scroll when drawer is open on mobile
   useEffect(() => {
     if (open) {
       document.body.style.overflow = 'hidden'
@@ -60,7 +63,6 @@ export default function Sidebar({ profile }: SidebarProps) {
     return pathname.startsWith(href)
   }
 
-  // ── Shared nav link renderer ──────────────────────────────────────────
   function NavLink({ href, icon: Icon, label }: { href: string; icon: React.ElementType; label: string }) {
     const active = isActive(href)
     return (
@@ -78,11 +80,9 @@ export default function Sidebar({ profile }: SidebarProps) {
     )
   }
 
-  // ── Sidebar inner content (shared by desktop sidebar + mobile drawer) ─
   function SidebarContent() {
     return (
       <div className="flex flex-col h-full">
-        {/* Logo + School */}
         <div className="px-5 py-5 border-b border-slate-100">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -91,7 +91,6 @@ export default function Sidebar({ profile }: SidebarProps) {
               </div>
               <span className="font-semibold text-slate-900">Schoolium</span>
             </div>
-            {/* Close button — only visible on mobile drawer */}
             <button
               onClick={() => setOpen(false)}
               className="lg:hidden w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100"
@@ -107,12 +106,10 @@ export default function Sidebar({ profile }: SidebarProps) {
           </div>
         </div>
 
-        {/* Nav links */}
         <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
           {navItems.map(item => <NavLink key={item.href} {...item} />)}
         </nav>
 
-        {/* User + logout */}
         <div className="px-3 py-4 border-t border-slate-100">
           <div className="px-3 py-2 mb-1">
             <p className="text-sm font-medium text-slate-800 truncate">{profile?.full_name}</p>
@@ -132,12 +129,12 @@ export default function Sidebar({ profile }: SidebarProps) {
 
   return (
     <>
-      {/* ── DESKTOP sidebar (lg and above) ─────────────────────────────── */}
+      {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-60 min-h-screen bg-white border-r border-slate-100 flex-col shrink-0">
         <SidebarContent />
       </aside>
 
-      {/* ── MOBILE top bar ──────────────────────────────────────────────── */}
+      {/* Mobile top bar */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b border-slate-100 flex items-center justify-between px-4 h-14">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 bg-brand-600 rounded-md flex items-center justify-center">
@@ -156,7 +153,7 @@ export default function Sidebar({ profile }: SidebarProps) {
         </button>
       </div>
 
-      {/* ── MOBILE drawer backdrop ───────────────────────────────────────── */}
+      {/* Mobile drawer backdrop */}
       {open && (
         <div
           className="lg:hidden fixed inset-0 z-50 bg-black/40"
@@ -164,7 +161,7 @@ export default function Sidebar({ profile }: SidebarProps) {
         />
       )}
 
-      {/* ── MOBILE drawer panel ──────────────────────────────────────────── */}
+      {/* Mobile drawer */}
       <aside
         className={`lg:hidden fixed top-0 left-0 bottom-0 z-50 w-72 bg-white shadow-2xl
           transform transition-transform duration-300 ease-in-out
@@ -173,20 +170,20 @@ export default function Sidebar({ profile }: SidebarProps) {
         <SidebarContent />
       </aside>
 
-      {/* ── MOBILE bottom nav bar ────────────────────────────────────────── */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-100 flex items-center justify-around px-2 h-16 safe-area-pb">
+      {/* Mobile bottom nav — 5 items, smaller label */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-100 flex items-center justify-around px-1 h-16 safe-area-pb">
         {navItems.map(({ href, icon: Icon, label }) => {
           const active = isActive(href)
           return (
             <Link
               key={href}
               href={href}
-              className={`flex flex-col items-center justify-center gap-0.5 px-3 py-2 rounded-xl flex-1 transition-colors ${
+              className={`flex flex-col items-center justify-center gap-0.5 px-2 py-2 rounded-xl flex-1 transition-colors ${
                 active ? 'text-brand-600' : 'text-slate-400'
               }`}
             >
-              <Icon size={20} strokeWidth={active ? 2.5 : 1.8} />
-              <span className={`text-[10px] font-medium ${active ? 'text-brand-600' : 'text-slate-400'}`}>
+              <Icon size={19} strokeWidth={active ? 2.5 : 1.8} />
+              <span className={`text-[9px] font-medium ${active ? 'text-brand-600' : 'text-slate-400'}`}>
                 {label}
               </span>
             </Link>

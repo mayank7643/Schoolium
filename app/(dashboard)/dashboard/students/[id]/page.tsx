@@ -1,12 +1,16 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+// FILE: app/(dashboard)/dashboard/students/[id]/page.tsx
+// Updated: added Print QR Card button using canvas-based QR generation
+
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/client'
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, Pencil,
-  Trash2, X, Save, Eye, EyeOff, IndianRupee
+  Trash2, X, Save, Eye, EyeOff, IndianRupee, QrCode, Printer,
+  CalendarCheck, LogIn, LogOut as LogOutIcon, TrendingUp
 } from 'lucide-react'
 
 interface StudentData {
@@ -38,6 +42,14 @@ interface FeeRecord {
   receipt_number: string | null
 }
 
+interface AttendanceRecord {
+  id: string
+  scan_date: string
+  scan_time: string
+  entry_type: 'entry' | 'exit'
+  gate: string
+}
+
 interface ClassOption { id: string; name: string; section: string | null }
 
 function formatAadhaar(value: string): string {
@@ -45,29 +57,255 @@ function formatAadhaar(value: string): string {
   return digits.replace(/(\d{4})(?=\d)/g, '$1 ').trim()
 }
 
+// ── QR Card Modal ─────────────────────────────────────────────
+function QRCardModal({
+  student,
+  schoolName,
+  onClose,
+}: {
+  student: StudentData
+  schoolName: string
+  onClose: () => void
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [qrReady, setQrReady] = useState(false)
+
+  useEffect(() => {
+    async function generateQR() {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      try {
+        const QRCode = (await import('qrcode')).default
+        // Encode the Supabase UUID — unguessable, this is what the scanner reads
+        await QRCode.toCanvas(canvas, student.id, {
+          width: 200,
+          margin: 1,
+          color: { dark: '#0f172a', light: '#ffffff' },
+        })
+        setQrReady(true)
+      } catch (err) {
+        console.error('QR generation failed:', err)
+      }
+    }
+    generateQR()
+  }, [student.id])
+
+  function handlePrint() {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const qrDataUrl = canvas.toDataURL('image/png')
+    const className = student.classes
+      ? `${student.classes.name}${student.classes.section ? ' - ' + student.classes.section : ''}`
+      : ''
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>ID Card – ${student.full_name}</title>
+  <style>
+    @page { size: 54mm 85mm; margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Arial', sans-serif; }
+    body { width: 54mm; height: 85mm; background: #fff; }
+    .card {
+      width: 54mm; height: 85mm;
+      display: flex; flex-direction: column;
+      border: 1.5px solid #1d4ed8; border-radius: 8px; overflow: hidden;
+    }
+    .header {
+      background: #1d4ed8; color: white;
+      padding: 6px 8px; text-align: center;
+    }
+    .school-name { font-size: 8px; font-weight: bold; letter-spacing: 0.3px; }
+    .subtitle { font-size: 6px; opacity: 0.85; margin-top: 1px; }
+    .body { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 8px 8px 6px; gap: 5px; }
+    .avatar {
+      width: 36px; height: 36px; border-radius: 50%;
+      background: #dbeafe; display: flex; align-items: center; justify-content: center;
+      font-size: 16px; font-weight: bold; color: #1d4ed8; flex-shrink: 0;
+    }
+    .name { font-size: 9px; font-weight: bold; color: #0f172a; text-align: center; line-height: 1.2; }
+    .class { font-size: 7px; color: #64748b; text-align: center; }
+    .uid {
+      font-family: monospace; font-size: 7px; font-weight: bold;
+      background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+      padding: 2px 6px; border-radius: 4px;
+    }
+    .qr-box { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+    .qr-img { width: 64px; height: 64px; }
+    .scan-label { font-size: 5.5px; color: #94a3b8; text-align: center; }
+    .footer {
+      background: #f8fafc; border-top: 1px solid #e2e8f0;
+      padding: 4px 8px; display: flex; justify-content: space-between;
+      align-items: center;
+    }
+    .footer-label { font-size: 5.5px; color: #94a3b8; }
+    .footer-value { font-size: 6px; color: #475569; font-weight: 500; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="school-name">${schoolName.toUpperCase()}</div>
+    <div class="subtitle">Student Identity Card</div>
+  </div>
+  <div class="body">
+    <div class="avatar">${student.full_name.charAt(0).toUpperCase()}</div>
+    <div class="name">${student.full_name}</div>
+    ${className ? `<div class="class">${className}</div>` : ''}
+    ${student.student_uid ? `<div class="uid">${student.student_uid}</div>` : ''}
+    <div class="qr-box">
+      <img class="qr-img" src="${qrDataUrl}" alt="QR"/>
+      <div class="scan-label">Scan for attendance</div>
+    </div>
+  </div>
+  <div class="footer">
+    <div>
+      <div class="footer-label">Father</div>
+      <div class="footer-value">${student.father_name ?? '—'}</div>
+    </div>
+    <div style="text-align:right">
+      <div class="footer-label">Phone</div>
+      <div class="footer-value">${student.parent_phone ?? '—'}</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>`
+
+    const iframe = document.createElement('iframe')
+    iframe.style.display = 'none'
+    document.body.appendChild(iframe)
+    iframe.contentWindow!.document.open()
+    iframe.contentWindow!.document.write(html)
+    iframe.contentWindow!.document.close()
+    setTimeout(() => {
+      iframe.contentWindow!.focus()
+      iframe.contentWindow!.print()
+      setTimeout(() => document.body.removeChild(iframe), 2000)
+    }, 400)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xs p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+            <QrCode size={18} className="text-brand-600" /> ID Card Preview
+          </h3>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Card preview */}
+        <div className="border-2 border-brand-200 rounded-xl overflow-hidden mb-4">
+          {/* Card header */}
+          <div className="bg-brand-700 text-white text-center py-2 px-3">
+            <p className="text-xs font-bold tracking-wide">{schoolName.toUpperCase()}</p>
+            <p className="text-[10px] opacity-80">Student Identity Card</p>
+          </div>
+          {/* Card body */}
+          <div className="flex flex-col items-center gap-2 py-4 px-3 bg-white">
+            <div className="w-10 h-10 bg-brand-100 rounded-full flex items-center justify-center">
+              <span className="text-brand-700 font-bold text-lg">
+                {student.full_name.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <p className="font-semibold text-slate-900 text-sm text-center leading-tight">
+              {student.full_name}
+            </p>
+            {student.classes && (
+              <p className="text-xs text-slate-500">
+                {student.classes.name}{student.classes.section ? ` - ${student.classes.section}` : ''}
+              </p>
+            )}
+            {student.student_uid && (
+              <span className="font-mono text-xs bg-brand-50 text-brand-700 border border-brand-200 px-2 py-0.5 rounded">
+                {student.student_uid}
+              </span>
+            )}
+            {/* QR canvas */}
+            <div className="flex flex-col items-center gap-1">
+              <canvas ref={canvasRef} className="rounded-lg" />
+              {!qrReady && (
+                <div className="w-[200px] h-[200px] bg-slate-100 rounded-lg flex items-center justify-center">
+                  <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              )}
+              <p className="text-[10px] text-slate-400">Scan for attendance</p>
+            </div>
+          </div>
+          {/* Card footer */}
+          <div className="bg-slate-50 border-t border-slate-100 px-3 py-2 flex justify-between">
+            <div>
+              <p className="text-[10px] text-slate-400">Father</p>
+              <p className="text-xs text-slate-600 font-medium">{student.father_name ?? '—'}</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-slate-400">Phone</p>
+              <p className="text-xs text-slate-600 font-medium">{student.parent_phone ?? '—'}</p>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={handlePrint}
+          disabled={!qrReady}
+          className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
+        >
+          <Printer size={16} />
+          {qrReady ? 'Print ID Card' : 'Generating QR…'}
+        </button>
+        <p className="text-xs text-slate-400 text-center mt-2">
+          Card size: 54×85mm (standard ID)
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// ── Main page ─────────────────────────────────────────────────
 export default function StudentDetailPage() {
-  const params = useParams()
-  const router = useRouter()
+  const params    = useParams()
+  const router    = useRouter()
   const studentId = params.id as string
 
-  const [student, setStudent] = useState<StudentData | null>(null)
-  const [fees, setFees] = useState<FeeRecord[]>([])
-  const [classes, setClasses] = useState<ClassOption[]>([])
-  const [loading, setLoading] = useState(true)
-  const [editing, setEditing] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [deleting, setDeleting] = useState(false)
+  const [student,           setStudent]           = useState<StudentData | null>(null)
+  const [fees,              setFees]              = useState<FeeRecord[]>([])
+  const [classes,           setClasses]           = useState<ClassOption[]>([])
+  const [loading,           setLoading]           = useState(true)
+  const [editing,           setEditing]           = useState(false)
+  const [saving,            setSaving]            = useState(false)
+  const [deleting,          setDeleting]          = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
-  const [showAadhaar, setShowAadhaar] = useState(false)
-  const [error, setError] = useState('')
-  const [form, setForm] = useState<Partial<StudentData>>({})
+  const [showAadhaar,       setShowAadhaar]       = useState(false)
+  const [showQRModal,       setShowQRModal]       = useState(false)
+  const [schoolName,        setSchoolName]        = useState('School')
+  const [error,             setError]             = useState('')
+  const [form,              setForm]              = useState<Partial<StudentData>>({})
+
+  // Attendance history
+  const [attendance,        setAttendance]        = useState<AttendanceRecord[]>([])
+  const [attendanceMonth,   setAttendanceMonth]   = useState(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
-    const [studentRes, feesRes, classesRes] = await Promise.all([
+    const [studentRes, feesRes, classesRes, profileRes, attendanceRes] = await Promise.all([
       supabase.from('students').select('*, classes(id, name, section)').eq('id', studentId).single(),
       supabase.from('fees').select('*').eq('student_id', studentId).order('created_at', { ascending: false }),
       supabase.from('classes').select('id, name, section').order('name'),
+      supabase.from('profiles').select('school_id, schools(name)').single(),
+      // Last 90 days of attendance — enough for monthly view + history
+      supabase.from('attendance')
+        .select('id, scan_date, scan_time, entry_type, gate')
+        .eq('student_id', studentId)
+        .order('scan_date', { ascending: false })
+        .order('entry_type',  { ascending: true })
+        .limit(200),
     ])
     if (studentRes.data) {
       setStudent(studentRes.data as StudentData)
@@ -75,6 +313,13 @@ export default function StudentDetailPage() {
     }
     setFees((feesRes.data ?? []) as FeeRecord[])
     setClasses((classesRes.data ?? []) as ClassOption[])
+    if (profileRes.data) {
+      const p = profileRes.data as any
+      setSchoolName(
+        Array.isArray(p.schools) ? p.schools[0]?.name ?? 'School' : p.schools?.name ?? 'School'
+      )
+    }
+    setAttendance((attendanceRes.data ?? []) as AttendanceRecord[])
     setLoading(false)
   }, [studentId])
 
@@ -98,20 +343,18 @@ export default function StudentDetailPage() {
     setSaving(true); setError('')
     const supabase = createClient()
     const aadhaarDigits = (form.aadhaar_number ?? '').replace(/\s/g, '') || null
-
     const { error } = await supabase.from('students').update({
-      full_name: form.full_name,
-      father_name: form.father_name || null,
-      mother_name: form.mother_name || null,
+      full_name:    form.full_name,
+      father_name:  form.father_name  || null,
+      mother_name:  form.mother_name  || null,
       date_of_birth: form.date_of_birth || null,
-      gender: form.gender || null,
-      class_id: form.class_id || null,
+      gender:       form.gender       || null,
+      class_id:     form.class_id     || null,
       aadhaar_number: aadhaarDigits,
-      address: form.address || null,
+      address:      form.address      || null,
       parent_phone: form.parent_phone || null,
       parent_email: form.parent_email || null,
     }).eq('id', studentId)
-
     if (error) { setError(error.message); setSaving(false); return }
     await fetchData()
     setEditing(false)
@@ -149,7 +392,7 @@ export default function StudentDetailPage() {
 
   if (!student) return <div className="text-center py-16 text-slate-500">Student not found.</div>
 
-  const totalPaid = fees.filter(f => f.status === 'paid').reduce((s, f) => s + Number(f.amount), 0)
+  const totalPaid    = fees.filter(f => f.status === 'paid').reduce((s, f) => s + Number(f.amount), 0)
   const totalPending = fees.filter(f => f.status === 'pending' || f.status === 'overdue').reduce((s, f) => s + Number(f.amount), 0)
 
   const aadhaarDisplay = form.aadhaar_number
@@ -169,7 +412,16 @@ export default function StudentDetailPage() {
           </Link>
           <h1 className="text-2xl font-bold text-slate-900">Student profile</h1>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap justify-end">
+          {/* Print QR button — always visible */}
+          {!editing && (
+            <button
+              onClick={() => setShowQRModal(true)}
+              className="btn-secondary flex items-center gap-2 text-sm py-1.5 px-3"
+            >
+              <QrCode size={15} /> Print QR
+            </button>
+          )}
           {editing ? (
             <>
               <button onClick={() => { setEditing(false); setForm(student); setError('') }}
@@ -215,14 +467,12 @@ export default function StudentDetailPage() {
               <h2 className="font-semibold text-slate-900 text-lg">{student.full_name}</h2>
             )}
 
-            {/* Student UID badge */}
             {student.student_uid && (
               <span className="font-mono text-xs bg-brand-50 text-brand-700 border border-brand-200 px-2 py-0.5 rounded mt-1 mb-1">
                 {student.student_uid}
               </span>
             )}
 
-            {/* Class */}
             {editing ? (
               <select name="class_id" className="input text-sm mt-1 mb-2" value={form.class_id ?? ''} onChange={handleChange}>
                 <option value="">No class</option>
@@ -238,58 +488,43 @@ export default function StudentDetailPage() {
               {student.is_active ? 'Active' : 'Inactive'}
             </span>
 
-            {/* Details */}
             <div className="w-full border-t border-slate-100 mt-4 pt-4 flex flex-col gap-3 text-sm text-left">
-
-              {/* Father */}
               <div>
                 <p className="text-xs text-slate-400 mb-1">Father's name</p>
                 {editing
                   ? <input name="father_name" type="text" className="input text-sm" placeholder="Father's name" value={form.father_name ?? ''} onChange={handleChange} />
                   : <p className="text-slate-700">{student.father_name ?? <span className="text-slate-400">—</span>}</p>}
               </div>
-
-              {/* Mother */}
               <div>
                 <p className="text-xs text-slate-400 mb-1">Mother's name</p>
                 {editing
                   ? <input name="mother_name" type="text" className="input text-sm" placeholder="Mother's name" value={form.mother_name ?? ''} onChange={handleChange} />
                   : <p className="text-slate-700">{student.mother_name ?? <span className="text-slate-400">—</span>}</p>}
               </div>
-
-              {/* Phone */}
               <div className="flex items-center gap-2 text-slate-600">
                 <Phone size={14} className="text-slate-400 shrink-0" />
                 {editing
                   ? <input name="parent_phone" type="tel" inputMode="numeric" className="input text-sm" placeholder="Phone" value={form.parent_phone ?? ''} onChange={handleChange} maxLength={10} />
                   : <span>{student.parent_phone ?? <span className="text-slate-400">—</span>}</span>}
               </div>
-
-              {/* Email */}
               <div className="flex items-center gap-2 text-slate-600">
                 <Mail size={14} className="text-slate-400 shrink-0" />
                 {editing
                   ? <input name="parent_email" type="email" className="input text-sm" placeholder="Email" value={form.parent_email ?? ''} onChange={handleChange} />
                   : <span className="break-all">{student.parent_email ?? <span className="text-slate-400">—</span>}</span>}
               </div>
-
-              {/* Address */}
               <div className="flex items-start gap-2 text-slate-600">
                 <MapPin size={14} className="text-slate-400 mt-0.5 shrink-0" />
                 {editing
                   ? <textarea name="address" className="input text-sm resize-none" rows={2} placeholder="Address" value={form.address ?? ''} onChange={handleChange} />
                   : <span>{student.address ?? <span className="text-slate-400">—</span>}</span>}
               </div>
-
-              {/* DOB */}
               <div className="flex items-center gap-2 text-slate-600">
                 <Calendar size={14} className="text-slate-400 shrink-0" />
                 {editing
                   ? <input name="date_of_birth" type="date" className="input text-sm" value={form.date_of_birth ?? ''} onChange={handleChange} />
                   : <span>{student.date_of_birth ? new Date(student.date_of_birth).toLocaleDateString('en-IN') : <span className="text-slate-400">—</span>}</span>}
               </div>
-
-              {/* Aadhaar */}
               <div>
                 <p className="text-xs text-slate-400 mb-1">Aadhaar</p>
                 {editing ? (
@@ -315,7 +550,6 @@ export default function StudentDetailPage() {
                   </p>
                 )}
               </div>
-
               <div className="flex items-center gap-2 text-slate-600">
                 <Calendar size={14} className="text-slate-400 shrink-0" />
                 <span className="text-xs">Admitted {new Date(student.admission_date).toLocaleDateString('en-IN')}</span>
@@ -378,8 +612,134 @@ export default function StudentDetailPage() {
               <p className="text-sm text-slate-400 text-center py-4">No fee records yet</p>
             )}
           </div>
+
+          {/* ── Attendance history panel ─────────────────────── */}
+          <div className="card">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h3 className="font-semibold text-slate-800 flex items-center gap-2">
+                <CalendarCheck size={17} className="text-brand-600" /> Attendance history
+              </h3>
+              {/* Month picker */}
+              <input
+                type="month"
+                value={attendanceMonth}
+                max={new Date().toISOString().slice(0, 7)}
+                onChange={e => setAttendanceMonth(e.target.value)}
+                className="input text-xs py-1 px-2 w-auto"
+              />
+            </div>
+
+            {(() => {
+              // Filter records for selected month
+              const [yr, mo] = attendanceMonth.split('-').map(Number)
+              const monthRecords = attendance.filter(r => {
+                const d = new Date(r.scan_date)
+                return d.getFullYear() === yr && d.getMonth() + 1 === mo
+              })
+
+              // Group by date — each date can have entry + exit
+              const byDate: Record<string, { entry?: AttendanceRecord; exit?: AttendanceRecord }> = {}
+              monthRecords.forEach(r => {
+                if (!byDate[r.scan_date]) byDate[r.scan_date] = {}
+                if (r.entry_type === 'entry') byDate[r.scan_date].entry = r
+                else byDate[r.scan_date].exit = r
+              })
+
+              const presentDays = Object.keys(byDate).length
+              // Working days = weekdays in selected month (Mon-Sat)
+              const daysInMonth = new Date(yr, mo, 0).getDate()
+              const workingDays = Array.from({ length: daysInMonth }, (_, i) => {
+                const d = new Date(yr, mo - 1, i + 1).getDay()
+                return d !== 0 // exclude Sundays only
+              }).filter(Boolean).length
+              const pct = workingDays > 0 ? Math.round((presentDays / workingDays) * 100) : 0
+
+              const sortedDates = Object.keys(byDate).sort((a, b) => b.localeCompare(a))
+
+              return (
+                <>
+                  {/* Month summary */}
+                  <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className="bg-brand-50 rounded-xl p-3 text-center">
+                      <p className="text-xs text-slate-500 mb-1">Present</p>
+                      <p className="text-xl font-bold text-brand-700">{presentDays}</p>
+                      <p className="text-xs text-slate-400">days</p>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3 text-center">
+                      <p className="text-xs text-slate-500 mb-1">Working</p>
+                      <p className="text-xl font-bold text-slate-700">{workingDays}</p>
+                      <p className="text-xs text-slate-400">days</p>
+                    </div>
+                    <div className={`rounded-xl p-3 text-center ${pct >= 75 ? 'bg-green-50' : pct >= 50 ? 'bg-yellow-50' : 'bg-red-50'}`}>
+                      <p className="text-xs text-slate-500 mb-1">Rate</p>
+                      <p className={`text-xl font-bold ${pct >= 75 ? 'text-green-700' : pct >= 50 ? 'text-yellow-700' : 'text-red-600'}`}>{pct}%</p>
+                      <p className="text-xs text-slate-400">attendance</p>
+                    </div>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="w-full bg-slate-100 rounded-full h-1.5 mb-4">
+                    <div
+                      className={`h-1.5 rounded-full transition-all ${pct >= 75 ? 'bg-green-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-red-500'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+
+                  {/* Daily log */}
+                  {sortedDates.length === 0 ? (
+                    <p className="text-sm text-slate-400 text-center py-4">No attendance records this month</p>
+                  ) : (
+                    <div className="flex flex-col divide-y divide-slate-50">
+                      {sortedDates.map(date => {
+                        const { entry, exit } = byDate[date]
+                        const d = new Date(date + 'T00:00:00')
+                        const dayLabel = d.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })
+                        const entryTime = entry ? new Date(entry.scan_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }) : null
+                        const exitTime  = exit  ? new Date(exit.scan_time).toLocaleTimeString('en-IN',  { hour: '2-digit', minute: '2-digit', hour12: true }) : null
+                        return (
+                          <div key={date} className="flex items-center justify-between py-2.5">
+                            <div className="flex items-center gap-2.5">
+                              <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center shrink-0">
+                                <CalendarCheck size={14} className="text-green-600" />
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium text-slate-800">{dayLabel}</p>
+                                <p className="text-xs text-slate-400">{entry?.gate ?? exit?.gate ?? '—'}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3 text-xs">
+                              {entryTime && (
+                                <div className="flex items-center gap-1 text-green-700 bg-green-50 px-2 py-0.5 rounded-full">
+                                  <LogIn size={11} /> {entryTime}
+                                </div>
+                              )}
+                              {exitTime && (
+                                <div className="flex items-center gap-1 text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
+                                  <LogOutIcon size={11} /> {exitTime}
+                                </div>
+                              )}
+                              {!entryTime && !exitTime && <span className="text-slate-400">—</span>}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
+              )
+            })()}
+          </div>
         </div>
       </div>
+
+      {/* QR Card Modal */}
+      {showQRModal && student && (
+        <QRCardModal
+          student={student}
+          schoolName={schoolName}
+          onClose={() => setShowQRModal(false)}
+        />
+      )}
 
       {/* Delete confirmation modal */}
       {showDeleteConfirm && (

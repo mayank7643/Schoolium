@@ -17,12 +17,15 @@
     "lucide-react": "^0.383.0",
     "clsx": "^2.1.1",
     "tailwind-merge": "^2.5.2",
-    "@react-pdf/renderer": "^3.4.4"
+    "@react-pdf/renderer": "^3.4.4",
+    "html5-qrcode": "^2.3.8",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/qrcode": "^1.5.5",
     "autoprefixer": "^10.0.1",
     "eslint": "^8",
     "eslint-config-next": "14.2.5",

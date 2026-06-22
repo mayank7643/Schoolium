@@ -3,8 +3,8 @@
 // Matches the Supabase schema exactly
 // ============================================
 
-export type Plan = 'basic' | 'pro' | 'enterprise'
-export type Role = 'super_admin' | 'school_admin' | 'teacher' | 'parent'
+export type Plan = 'basic' | 'standard' | 'premium'
+export type Role = 'super_admin' | 'school_admin' | 'teacher' | 'guard' | 'parent'  // added: guard
 export type Gender = 'male' | 'female' | 'other'
 export type FeeType = 'tuition' | 'exam' | 'transport' | 'other'
 export type FeeStatus = 'pending' | 'paid' | 'overdue'
@@ -17,9 +17,14 @@ export interface School {
   phone: string | null
   email: string | null
   logo_url: string | null
-  plan: Plan
+  plan: Plan | null
   is_active: boolean
   created_at: string
+  // WhatsApp feature gate
+  wa_alerts_enabled: boolean
+  wa_monthly_quota: number
+  wa_messages_sent_month: number
+  wa_quota_reset_date: string | null
 }
 
 export interface Profile {
@@ -27,6 +32,7 @@ export interface Profile {
   school_id: string | null
   full_name: string
   role: Role
+  gate: string | null   // added: guard gate assignment (e.g. 'Main Gate')
   phone: string | null
   is_active: boolean
   created_at: string
@@ -59,6 +65,7 @@ export interface Student {
   is_active: boolean
   admission_date: string
   created_at: string
+  parent_phone_opted_out: boolean  // WA opt-out — set when parent replies STOP
   // joined
   classes?: Class
 }
@@ -75,6 +82,22 @@ export interface Fee {
   payment_method: PaymentMethod | null
   receipt_number: string | null
   notes: string | null
+  period_months: string[] | null   // e.g. ['2026-05','2026-06']
+  created_at: string
+  // joined
+  student?: Student
+}
+
+export interface Attendance {
+  id: string
+  school_id: string
+  student_id: string
+  scan_date: string                  // DATE — 'YYYY-MM-DD'
+  scan_time: string                  // TIMESTAMPTZ — full ISO string
+  entry_type: 'entry' | 'exit'      // added: matches attendance_unique_per_day_and_type index
+  gate: string                       // e.g. 'Main Gate', 'Side Gate'
+  guard_id: string | null            // guard user id or name, nullable
+  exam_id: string | null             // nullable FK — for future exam-day attendance
   created_at: string
   // joined
   student?: Student
@@ -89,4 +112,15 @@ export interface DashboardStats {
   totalFeesCollected: number
   totalFeesPending: number
   totalClasses: number
+}
+
+// ============================================
+// ATTENDANCE SUMMARY TYPES
+// ============================================
+
+export interface AttendanceSummary {
+  date: string
+  total_present: number
+  total_students: number
+  attendance_rate: number   // computed: total_present / total_students * 100
 }

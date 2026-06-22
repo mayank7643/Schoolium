@@ -169,11 +169,11 @@ Deno.serve(async (req) => {
       // Check monthly quota before retrying
       const { data: school } = await admin
         .from('schools')
-        .select('name, wa_monthly_quota, wa_messages_sent_month')
+        .select('name, wa_alerts_enabled, wa_monthly_quota, wa_messages_sent_month')
         .eq('id', row.school_id)
         .single()
 
-      if (!school || school.wa_messages_sent_month >= school.wa_monthly_quota) {
+      if (!school || !school.wa_alerts_enabled || school.wa_messages_sent_month >= school.wa_monthly_quota) {
         await admin
           .from('wa_message_log')
           .update({ status: 'quota_exceeded', updated_at: new Date().toISOString() })

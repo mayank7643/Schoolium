@@ -207,10 +207,9 @@ Deno.serve(async (req) => {
     // ── STEP 5: Fetch student + school in parallel ────────────────────────────
     const [studentRes, schoolRes] = await Promise.all([
       admin
-        .from('students')
-        .select('id, full_name, parent_phone, parent_phone_opted_out, school_id')
-        .eq('id', student_id)
-        .eq('school_id', school_id)
+        .from('schools')
+        .select('id, name, wa_alerts_enabled, wa_monthly_quota, wa_messages_sent_month, wa_quota_reset_date')
+        .eq('id', school_id)
         .single(),
       admin
         .from('schools')
@@ -228,6 +227,11 @@ Deno.serve(async (req) => {
 
     const student = studentRes.data
     const school  = schoolRes.data
+
+    // ── STEP 5.5: Feature gate — WA alerts must be enabled for this school ────
+    if (!school.wa_alerts_enabled) {
+      return json({ success: true, skipped: true, reason: 'feature_not_enabled' })
+    }
 
     // ── STEP 6: Skip if no parent phone ──────────────────────────────────────
     if (!student.parent_phone?.trim()) {

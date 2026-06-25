@@ -1,0 +1,1108 @@
+'use client'
+
+// FILE: app/(dashboard)/dashboard/fees/collect/page.tsx
+// Sprint 1 — Step 2
+// Omnibox search (name / father name / phone / UID / class filter)
+// Post-payment success screen with print + collect another
+
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { createClient } from '@/utils/supabase/client'
+import Link from 'next/link'
+import {
+  Search, X, IndianRupee, CheckCircle2, AlertCircle,
+  ChevronDown, ChevronUp, Printer, ArrowLeft,
+  Clock, BadgeCheck, Wallet, Plus, Filter, UserCheck,
+} from 'lucide-react'
+import type { DueStatus, PaymentMethod } from '@/types'
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface StudentResult {
+  id: string
+  full_name: string
+  student_uid: string | null
+  father_name: string | null
+  parent_phone: string | null
+  class_name:    string | null
+  class_section: string | null
+}
+
+interface ClassOption {
+  id: string
+  name: string
+  section: string | null
+}
+
+interface DueRow {
+  id: string
+  fee_type: string
+  label: string
+  month: string
+  academic_year: string
+  due_date: string
+  base_amount: number
+  discount_amount: number
+  net_amount: number
+  late_fee_amount: number
+  total_due: number
+  amount_paid: number
+  balance: number
+  status: DueStatus
+  late_fee_applied: boolean
+  fee_structure_item_id: string
+}
+
+interface PaymentResult {
+  payment_id: string
+  receipt_number: string
+}
+
+interface MonthlyDueSummary {
+  label:       string
+  total_due:   number
+  amount_paid: number
+  balance:     number
+  status:      DueStatus
+}
+
+interface SchoolInfo {
+  id: string
+  name: string
+  phone: string | null
+}
+
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatCurrency(n: number): string {
+  return '\u20b9' + Number(n).toLocaleString('en-IN')
+}
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  })
+}
+
+function formatMonth(ym: string): string {
+  const [y, m] = ym.split('-')
+  return new Date(parseInt(y), parseInt(m) - 1, 1)
+    .toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+}
+
+function getDueStatusStyle(status: DueStatus, balance: number, dueDate: string) {
+  const overdue = balance > 0 && new Date(dueDate) < new Date()
+  if (status === 'paid')    return { badge: 'badge-green',  label: 'Paid' }
+  if (status === 'waived')  return { badge: 'badge-blue',   label: 'Waived' }
+  if (status === 'partial') return { badge: 'badge-yellow', label: 'Partial' }
+  if (overdue)              return { badge: 'badge-red',    label: 'Overdue' }
+  return { badge: 'badge-yellow', label: 'Pending' }
+}
+
+function getClassName(student: StudentResult): string | null {
+  if (!student.class_name) return null
+  return student.class_name + (student.class_section ? ` - ${student.class_section}` : '')
+}
+
+// ── Receipt HTML ──────────────────────────────────────────────────────────────
+
+function buildReceiptHTML(
+  receiptNumber: string,
+  student: StudentResult,
+  due: DueRow,
+  amountPaid: number,
+  paymentMethod: PaymentMethod,
+  paidDate: string,
+  school: SchoolInfo,
+  monthlyDues: MonthlyDueSummary[],
+): string {
+  const className = getClassName(student)
+  const formattedDate = new Date(paidDate).toLocaleDateString('en-IN', {
+    day: '2-digit', month: 'long', year: 'numeric',
+  })
+  const totalMonthDue  = monthlyDues.reduce((s, d) => s + d.total_due,   0)
+  const totalMonthPaid = monthlyDues.reduce((s, d) => s + d.amount_paid, 0)
+  const totalMonthBal  = monthlyDues.reduce((s, d) => s + d.balance,     0)
+
+  const lineItemRows = monthlyDues.length > 0
+    ? monthlyDues.map(d => `
+        <tr>
+          <td style="padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#1e293b">${d.label}</td>
+          <td style="padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:right;color:#1e293b">\u20b9${d.total_due.toLocaleString('en-IN')}</td>
+          <td style="padding:7px 0;border-bottom:1px solid #f1f5f9;font-size:13px;text-align:right;color:${d.status==='paid'?'#16a34a':'#b45309'}">${d.status==='paid'?'Paid':`\u20b9${d.amount_paid.toLocaleString('en-IN')} paid`}</td>
+        </tr>`).join('')
+    : `<tr><td colspan="3" style="padding:7px 0;font-size:13px;color:#64748b">${due.label}</td></tr>`
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Receipt ${receiptNumber}</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: Arial, sans-serif; background: #fff; color: #1e293b; padding: 32px; max-width: 520px; margin: 0 auto; }
+  .top-bar { background: #2563eb; height: 6px; border-radius: 4px; margin-bottom: 24px; }
+  .school { font-size: 20px; font-weight: 700; color: #1e3a8a; }
+  .receipt-label { font-size: 10px; color: #64748b; letter-spacing: 2.5px; text-transform: uppercase; margin-top: 3px; }
+  .rcpnum { font-size: 11px; color: #94a3b8; margin-top: 4px; font-family: monospace; }
+  .divider { border: none; border-top: 1px dashed #cbd5e1; margin: 16px 0; }
+  .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-bottom: 16px; }
+  .meta-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; }
+  .meta-label { color: #64748b; }
+  .meta-value { font-weight: 600; color: #1e293b; }
+  .section-title { font-size: 10px; font-weight: 700; color: #64748b; letter-spacing: 1.5px; text-transform: uppercase; margin: 14px 0 8px; }
+  .items-table { width: 100%; border-collapse: collapse; }
+  .items-table th { font-size: 10px; color: #94a3b8; text-align: left; padding-bottom: 6px; font-weight: 600; letter-spacing: 0.5px; }
+  .items-table th:not(:first-child) { text-align: right; }
+  .totals-row { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0; border-top: 1px solid #e2e8f0; margin-top: 4px; }
+  .amount-box { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 14px 18px; margin: 16px 0; display: flex; justify-content: space-between; align-items: center; }
+  .amount-label { font-size: 11px; color: #1d4ed8; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+  .amount-value { font-size: 26px; font-weight: 800; color: #1e3a8a; }
+  .balance-note { font-size: 11px; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 6px 10px; margin-top: 4px; }
+  .sig-area { display: flex; justify-content: flex-end; margin-top: 24px; padding-top: 14px; border-top: 1px solid #e2e8f0; }
+  .sig-line { border-top: 1.5px solid #475569; width: 140px; padding-top: 5px; font-size: 10px; color: #64748b; text-align: center; }
+  .footer { margin-top: 18px; text-align: center; font-size: 10px; color: #94a3b8; line-height: 1.6; }
+  @media print { .amount-box { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+</style>
+</head>
+<body>
+  <div class="top-bar"></div>
+  <div class="school">${school.name}</div>
+  <div class="receipt-label">Fee Receipt — ${formatMonth(due.month)}</div>
+  <div class="rcpnum">${receiptNumber}</div>
+  <hr class="divider">
+
+  <div class="meta-grid">
+    <div class="meta-row"><span class="meta-label">Student</span><span class="meta-value">${student.full_name}</span></div>
+    ${student.student_uid ? `<div class="meta-row"><span class="meta-label">Student ID</span><span class="meta-value" style="font-family:monospace">${student.student_uid}</span></div>` : ''}
+    ${className ? `<div class="meta-row"><span class="meta-label">Class</span><span class="meta-value">${className}</span></div>` : ''}
+    ${student.father_name ? `<div class="meta-row"><span class="meta-label">Father's Name</span><span class="meta-value">${student.father_name}</span></div>` : ''}
+    <div class="meta-row"><span class="meta-label">Payment Mode</span><span class="meta-value">${paymentMethod.replace('_',' ').toUpperCase()}</span></div>
+    <div class="meta-row"><span class="meta-label">Date</span><span class="meta-value">${formattedDate}</span></div>
+  </div>
+
+  <div class="section-title">Fee breakdown — ${formatMonth(due.month)}</div>
+  <table class="items-table">
+    <thead>
+      <tr>
+        <th>Fee Head</th>
+        <th style="text-align:right">Amount</th>
+        <th style="text-align:right">Status</th>
+      </tr>
+    </thead>
+    <tbody>${lineItemRows}</tbody>
+  </table>
+
+  ${monthlyDues.length > 0 ? `
+  <div class="totals-row"><span style="color:#64748b">Total due this month</span><span style="font-weight:700">\u20b9${totalMonthDue.toLocaleString('en-IN')}</span></div>
+  <div class="totals-row"><span style="color:#64748b">Total paid</span><span style="font-weight:700;color:#16a34a">\u20b9${totalMonthPaid.toLocaleString('en-IN')}</span></div>
+  ` : ''}
+
+  <div class="amount-box">
+    <span class="amount-label">Paid now</span>
+    <span class="amount-value">\u20b9${amountPaid.toLocaleString('en-IN')}</span>
+  </div>
+
+  ${totalMonthBal > 0 ? `<div class="balance-note">\u26a0\ufe0f Remaining balance for ${formatMonth(due.month)}: \u20b9${totalMonthBal.toLocaleString('en-IN')}</div>` : ''}
+
+  <div class="sig-area"><div class="sig-line">Authorized Signature</div></div>
+  <div class="footer">${school.name}${school.phone ? ' \u00b7 ' + school.phone : ''}<br>Computer-generated receipt. No physical signature required.</div>
+</body>
+</html>`
+}
+
+// ── Combined Receipt HTML ─────────────────────────────────────────────────────
+
+
+// ── Success Screen ─────────────────────────────────────────────────────────────
+// Shown inline after payment — not a modal. Shows receipt details,
+// print button, collect another button, close button.
+
+function SuccessScreen({
+  receiptNumber,
+  student,
+  due,
+  amountPaid,
+  paymentMethod,
+  paidDate,
+  school,
+  monthlyDues,
+  onCollectAnother,
+  onClose,
+}: {
+  receiptNumber: string
+  student: StudentResult
+  due: DueRow
+  amountPaid: number
+  paymentMethod: PaymentMethod
+  paidDate: string
+  school: SchoolInfo
+  monthlyDues: MonthlyDueSummary[]
+  onCollectAnother: () => void
+  onClose: () => void
+}) {
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const className = getClassName(student)
+  const formattedDate = new Date(paidDate).toLocaleDateString('en-IN', {
+    day: '2-digit', month: 'long', year: 'numeric',
+  })
+  const totalMonthDue  = monthlyDues.reduce((s, d) => s + d.total_due,   0)
+  const totalMonthPaid = monthlyDues.reduce((s, d) => s + d.amount_paid, 0)
+  const totalMonthBal  = monthlyDues.reduce((s, d) => s + d.balance,     0)
+
+  function handlePrint() {
+    const iframe = iframeRef.current
+    if (!iframe?.contentWindow) return
+    const html = buildReceiptHTML(receiptNumber, student, due, amountPaid, paymentMethod, paidDate, school, monthlyDues)
+    iframe.contentWindow.document.open()
+    iframe.contentWindow.document.write(html)
+    iframe.contentWindow.document.close()
+    setTimeout(() => { iframe.contentWindow?.focus(); iframe.contentWindow?.print() }, 350)
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Success banner */}
+      <div className="bg-green-50 border border-green-200 rounded-2xl p-5 text-center">
+        <CheckCircle2 size={40} className="mx-auto text-green-500 mb-3" />
+        <p className="text-lg font-bold text-green-800">Payment recorded!</p>
+        <p className="text-sm text-green-600 mt-1 font-mono">{receiptNumber}</p>
+      </div>
+
+      {/* Receipt preview */}
+      <div className="card p-5">
+        <div className="h-1 bg-blue-600 rounded-full mb-4" />
+        <p className="font-bold text-blue-900 text-base">{school.name}</p>
+        <p className="text-[10px] text-slate-400 tracking-widest uppercase mt-0.5">
+          Fee Receipt — {formatMonth(due.month)}
+        </p>
+
+        {/* Student meta */}
+        <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-4 text-sm">
+          {[
+            ['Student',    student.full_name],
+            ...(student.student_uid ? [['Student ID', student.student_uid]] : []),
+            ...(className            ? [['Class',      className]]            : []),
+            ...(student.father_name  ? [["Father's",   student.father_name]]  : []),
+            ['Mode',       paymentMethod.replace('_', ' ')],
+            ['Date',       formattedDate],
+          ].map(([label, value]) => (
+            <div key={label} className="flex flex-col">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wide">{label}</span>
+              <span className="font-medium text-slate-800 text-sm truncate">{value}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Monthly line items */}
+        {monthlyDues.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold mb-2">
+              Fee breakdown — {formatMonth(due.month)}
+            </p>
+            <div className="flex flex-col gap-0">
+              {monthlyDues.map((d, i) => (
+                <div key={i} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0 text-sm">
+                  <span className="text-slate-600 flex-1 truncate mr-2">{d.label}</span>
+                  <span className="text-slate-400 text-xs mr-3">{formatCurrency(d.total_due)}</span>
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    d.status === 'paid'    ? 'bg-green-50 text-green-700' :
+                    d.status === 'partial' ? 'bg-amber-50 text-amber-700' :
+                                             'bg-slate-100 text-slate-500'
+                  }`}>
+                    {d.status === 'paid'    ? 'Paid' :
+                     d.status === 'partial' ? `${formatCurrency(d.amount_paid)} paid` :
+                                              'Pending'}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {/* Month totals */}
+            <div className="flex flex-col gap-1 mt-3 pt-3 border-t border-slate-200">
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500">Total due this month</span>
+                <span className="font-semibold text-slate-800">{formatCurrency(totalMonthDue)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-slate-500">Total paid</span>
+                <span className="font-semibold text-green-700">{formatCurrency(totalMonthPaid)}</span>
+              </div>
+              {totalMonthBal > 0 && (
+                <div className="flex justify-between text-sm">
+                  <span className="text-amber-600 font-medium">Balance remaining</span>
+                  <span className="font-bold text-amber-700">{formatCurrency(totalMonthBal)}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Amount paid now */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mt-4 flex justify-between items-center">
+          <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider">Paid now</span>
+          <span className="text-2xl font-extrabold text-blue-900">{formatCurrency(amountPaid)}</span>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div className="grid grid-cols-2 gap-3">
+        <button onClick={handlePrint} className="btn-secondary flex items-center justify-center gap-2 py-3">
+          <Printer size={15} /> Print receipt
+        </button>
+        <button onClick={onCollectAnother} className="btn-primary flex items-center justify-center gap-2 py-3">
+          <UserCheck size={15} /> Collect another
+        </button>
+      </div>
+
+      <button onClick={onClose} className="text-sm text-slate-400 hover:text-slate-600 text-center py-1 transition-colors">
+        Close and go back to fees
+      </button>
+
+      <iframe ref={iframeRef} style={{ display: 'none' }} title="receipt-print" />
+    </div>
+  )
+}
+
+// ── Due Card ──────────────────────────────────────────────────────────────────
+
+function DueCard({ due, onCollect }: { due: DueRow; onCollect: (due: DueRow) => void }) {
+  const [expanded, setExpanded] = useState(false)
+  const { badge, label } = getDueStatusStyle(due.status, due.balance, due.due_date)
+  const canPay = due.status !== 'paid' && due.status !== 'waived' && due.balance > 0
+
+  return (
+    <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+      <div className="flex items-center gap-3 p-3.5">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-medium text-sm text-slate-900">{due.label}</p>
+            <span className={badge}>{label}</span>
+            {due.late_fee_applied && (
+              <span className="text-[10px] bg-red-50 text-red-600 px-1.5 py-0.5 rounded font-medium">
+                +Late fee
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {formatMonth(due.month)} · Due {formatDate(due.due_date)}
+          </p>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="font-bold text-slate-900">{formatCurrency(due.balance)}</p>
+          <p className="text-[11px] text-slate-400">remaining</p>
+        </div>
+        <button
+          onClick={() => setExpanded(e => !e)}
+          className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 shrink-0"
+        >
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-slate-100 px-3.5 py-3 bg-slate-50 flex flex-col gap-2">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+            {[
+              ['Base amount',  formatCurrency(due.base_amount)],
+              ['Discount',     due.discount_amount > 0 ? `-${formatCurrency(due.discount_amount)}` : '—'],
+              ['Net due',      formatCurrency(due.net_amount)],
+              ['Late fee',     due.late_fee_amount > 0 ? `+${formatCurrency(due.late_fee_amount)}` : '—'],
+              ['Total due',    formatCurrency(due.total_due)],
+              ['Amount paid',  formatCurrency(due.amount_paid)],
+            ].map(([k, v]) => (
+              <div key={k} className="flex justify-between">
+                <span className="text-slate-400">{k}</span>
+                <span className="font-medium text-slate-700">{v}</span>
+              </div>
+            ))}
+          </div>
+          {canPay && (
+            <button onClick={() => onCollect(due)} className="btn-primary w-full py-2 text-sm mt-1">
+              Collect payment
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Collect Modal ─────────────────────────────────────────────────────────────
+
+function CollectModal({
+  due, student, school, onClose, onSuccess,
+}: {
+  due: DueRow
+  student: StudentResult
+  school: SchoolInfo
+  onClose: () => void
+  onSuccess: (result: PaymentResult, amount: number, method: PaymentMethod, date: string) => void
+}) {
+  const [amount, setAmount] = useState(String(due.balance))
+  const [method, setMethod] = useState<PaymentMethod>('cash')
+  const [date, setDate]     = useState(new Date().toISOString().split('T')[0])
+  const [notes, setNotes]   = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+
+  const parsedAmount = parseFloat(amount) || 0
+  const isPartial    = parsedAmount < due.balance && parsedAmount > 0
+  const isOver       = parsedAmount > due.balance
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (parsedAmount <= 0) { setError('Enter a valid amount'); return }
+    if (isOver) { setError(`Maximum is ${formatCurrency(due.balance)}`); return }
+
+    setSaving(true)
+    setError('')
+
+    const supabase = createClient()
+    const { data: profile } = await supabase.from('profiles').select('id, school_id').single()
+    if (!profile) { setError('Session error — please reload'); setSaving(false); return }
+
+    const { data, error: rpcError } = await supabase.rpc('record_fee_payment', {
+      p_school_id:      profile.school_id,
+      p_student_id:     student.id,
+      p_fee_due_id:     due.id,
+      p_amount_paid:    parsedAmount,
+      p_payment_method: method,
+      p_paid_date:      date,
+      p_collected_by:   profile.id,
+      p_notes:          notes || null,
+    })
+
+    if (rpcError) { setError(rpcError.message); setSaving(false); return }
+
+    const result = Array.isArray(data) ? data[0] : data
+    onSuccess(result as PaymentResult, parsedAmount, method, date)
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b border-slate-100">
+          <div>
+            <h2 className="font-semibold text-slate-900">Collect payment</h2>
+            <p className="text-xs text-slate-400 mt-0.5">{due.label} · {formatMonth(due.month)}</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">
+            <X size={18} className="text-slate-500" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-5 flex flex-col gap-4">
+          {/* Balance summary */}
+          <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 flex justify-between items-center">
+            <div>
+              <p className="text-xs text-slate-400">Outstanding balance</p>
+              <p className="text-xl font-bold text-slate-900 mt-0.5">{formatCurrency(due.balance)}</p>
+            </div>
+            {due.discount_amount > 0 && (
+              <div className="text-right">
+                <p className="text-xs text-slate-400">Discount applied</p>
+                <p className="text-sm font-medium text-green-700">-{formatCurrency(due.discount_amount)}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Amount input */}
+          <div>
+            <label className="label">Amount to collect (₹) *</label>
+            <div className="relative">
+              <IndianRupee size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                inputMode="numeric"
+                className="input pl-8 text-lg font-semibold"
+                value={amount}
+                onChange={e => {
+                  if (e.target.value === '' || /^\d+(\.\d{0,2})?$/.test(e.target.value)) {
+                    setAmount(e.target.value)
+                    setError('')
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+            {/* Quick amount buttons */}
+            <div className="flex gap-2 mt-2">
+              {[due.balance, due.balance / 2, due.balance / 4]
+                .filter(a => a > 0)
+                .map((a, i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => setAmount(String(Math.round(a)))}
+                    className="flex-1 py-1.5 text-xs border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600 font-medium transition-colors"
+                  >
+                    {i === 0 ? 'Full' : i === 1 ? 'Half' : '¼'}
+                    <span className="block text-[10px] text-slate-400">{formatCurrency(Math.round(a))}</span>
+                  </button>
+                ))}
+            </div>
+            {isPartial && (
+              <p className="text-xs text-amber-600 mt-1.5 bg-amber-50 px-2.5 py-1.5 rounded-lg">
+                Partial payment — {formatCurrency(due.balance - parsedAmount)} will remain outstanding
+              </p>
+            )}
+            {isOver && (
+              <p className="text-xs text-red-600 mt-1.5">Amount exceeds outstanding balance</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Payment method *</label>
+              <select className="input" value={method} onChange={e => setMethod(e.target.value as PaymentMethod)}>
+                <option value="cash">Cash</option>
+                <option value="upi">UPI</option>
+                <option value="bank_transfer">Bank Transfer</option>
+                <option value="cheque">Cheque</option>
+                <option value="card">Card</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Payment date *</label>
+              <input
+                type="date"
+                className="input"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                max={new Date().toISOString().split('T')[0]}
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="label">Notes (optional)</label>
+            <input
+              type="text"
+              className="input"
+              placeholder="e.g. Cheque no. 123456"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 bg-red-50 text-red-600 text-sm px-3 py-2.5 rounded-lg">
+              <AlertCircle size={14} className="shrink-0" /> {error}
+            </div>
+          )}
+
+          <button type="submit" disabled={saving || parsedAmount <= 0 || isOver} className="btn-primary w-full py-2.5">
+            {saving
+              ? <span className="flex items-center justify-center gap-2">
+                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  Recording...
+                </span>
+              : `Collect ${parsedAmount > 0 ? formatCurrency(parsedAmount) : ''}`}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
+export default function FeeCollectPage() {
+  const [query, setQuery]                   = useState('')
+  const [classFilter, setClassFilter]       = useState<string>('')
+  const [classes, setClasses]               = useState<ClassOption[]>([])
+  const [results, setResults]               = useState<StudentResult[]>([])
+  const [searching, setSearching]           = useState(false)
+  const [showClassFilter, setShowClassFilter] = useState(false)
+  const [selectedStudent, setSelectedStudent] = useState<StudentResult | null>(null)
+  const [dues, setDues]                     = useState<DueRow[]>([])
+  const [loadingDues, setLoadingDues]       = useState(false)
+  const [school, setSchool]                 = useState<SchoolInfo>({ id: '', name: '', phone: null })
+  const [collectingDue, setCollectingDue]   = useState<DueRow | null>(null)
+  const [successData, setSuccessData]       = useState<{
+    result: PaymentResult
+    due: DueRow
+    amount: number
+    method: PaymentMethod
+    date: string
+    monthlyDues: MonthlyDueSummary[]
+  } | null>(null)
+  const [filter, setFilter]                 = useState<'pending' | 'all'>('pending')
+  const debounceRef                         = useRef<ReturnType<typeof setTimeout>>()
+  const searchParams                        = useSearchParams()
+
+  // Load school info + classes once
+  useEffect(() => {
+    async function init() {
+      const supabase = createClient()
+      const [{ data: profileData }, { data: classData }] = await Promise.all([
+        supabase.from('profiles').select('school_id, schools(id, name, phone)').single(),
+        supabase.from('classes').select('id, name, section').order('name'),
+      ])
+      const s = (profileData as any)?.schools
+      if (s) setSchool({ id: s.id, name: s.name, phone: s.phone })
+      setClasses((classData ?? []) as ClassOption[])
+    }
+    init()
+  }, [])
+
+  // Auto-load student if student_id param is present (from student profile)
+  useEffect(() => {
+    const studentId = searchParams.get('student_id')
+    if (!studentId) return
+    async function autoLoad() {
+      const supabase = createClient()
+      const { data } = await supabase
+        .from('students')
+        .select('id, full_name, student_uid, father_name, parent_phone, classes(name, section)')
+        .eq('id', studentId)
+        .single()
+      if (data) {
+        const cls = Array.isArray((data as any).classes)
+          ? (data as any).classes[0] ?? null
+          : (data as any).classes
+        const student: StudentResult = {
+          id:            data.id,
+          full_name:     data.full_name,
+          student_uid:   data.student_uid,
+          father_name:   data.father_name,
+          parent_phone:  data.parent_phone,
+          class_name:    cls?.name ?? null,
+          class_section: cls?.section ?? null,
+        }
+        setSelectedStudent(student)
+        loadDues(student)
+      }
+    }
+    autoLoad()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Debounced omnibox search via RPC
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    if (!query.trim() || query.trim().length < 2) { setResults([]); return }
+
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true)
+      const supabase = createClient()
+      const { data: profile } = await supabase.from('profiles').select('school_id').single()
+      if (!profile) { setSearching(false); return }
+
+      const { data, error } = await supabase.rpc('search_students_omnibox', {
+        p_school_id: profile.school_id,
+        p_query:     query.trim(),
+        p_class_id:  classFilter || null,
+        p_limit:     10,
+      })
+
+      if (!error) setResults((data ?? []) as StudentResult[])
+      setSearching(false)
+    }, 350)
+  }, [query, classFilter])
+
+  const loadDues = useCallback(async (student: StudentResult) => {
+    setLoadingDues(true)
+    setDues([])
+    const supabase = createClient()
+    const { data } = await supabase
+      .from('fee_dues')
+      .select('*')
+      .eq('student_id', student.id)
+      .order('due_date', { ascending: true })
+    setDues((data ?? []) as DueRow[])
+    setLoadingDues(false)
+  }, [])
+
+  function selectStudent(student: StudentResult) {
+    setSelectedStudent(student)
+    setQuery('')
+    setResults([])
+    setSuccessData(null)
+    loadDues(student)
+  }
+
+  function clearStudent() {
+    setSelectedStudent(null)
+    setDues([])
+    setSuccessData(null)
+    setQuery('')
+  }
+
+  async function handlePaymentSuccess(result: PaymentResult, amount: number, method: PaymentMethod, date: string) {
+    if (!collectingDue) return
+    const paidDue = collectingDue
+    setCollectingDue(null)
+
+    // Fetch all dues for the same month to build a combined monthly summary
+    let monthlyDues: MonthlyDueSummary[] = []
+    if (selectedStudent) {
+      const supabase = createClient()
+      const { data: sameDues } = await supabase
+        .from('fee_dues')
+        .select('label, total_due, amount_paid, balance, status, fee_structure_item_id')
+        .eq('student_id', selectedStudent.id)
+        .eq('month', paidDue.month)
+        .order('label')
+      // Merge the just-paid due with fresh DB data
+      if (sameDues) {
+        monthlyDues = sameDues.map(d => ({
+          label:       d.label,
+          total_due:   d.total_due,
+          // For the due we just paid, use the updated amount (DB may not have refreshed yet)
+          amount_paid: d.fee_structure_item_id === paidDue.fee_structure_item_id
+            ? d.amount_paid + amount
+            : d.amount_paid,
+          balance:     d.fee_structure_item_id === paidDue.fee_structure_item_id
+            ? Math.max(0, d.balance - amount)
+            : d.balance,
+          status:      d.fee_structure_item_id === paidDue.fee_structure_item_id
+            ? (d.balance - amount <= 0 ? 'paid' : 'partial')
+            : d.status as DueStatus,
+        }))
+      }
+    }
+
+    setSuccessData({ result, due: paidDue, amount, method, date, monthlyDues })
+    if (selectedStudent) loadDues(selectedStudent)
+  }
+
+  function handleCollectAnother() {
+    // Clear success screen, keep same student loaded
+    setSuccessData(null)
+  }
+
+  // Stats
+  const totalPending = dues.filter(d => d.status !== 'paid' && d.status !== 'waived').reduce((s, d) => s + d.balance, 0)
+  const totalPaid    = dues.filter(d => d.status === 'paid').reduce((s, d) => s + d.amount_paid, 0)
+  const overdueCount = dues.filter(d => d.balance > 0 && new Date(d.due_date) < new Date() && d.status !== 'paid' && d.status !== 'waived').length
+
+  const filteredDues = filter === 'pending'
+    ? dues.filter(d => d.status !== 'paid' && d.status !== 'waived')
+    : dues
+
+  // ── Render: Success Screen ─────────────────────────────────────────────────
+  if (successData && selectedStudent) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <div className="flex items-center gap-3 mb-6">
+          <Link href="/dashboard/fees" className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">
+            <ArrowLeft size={18} />
+          </Link>
+          <h1 className="text-2xl font-bold text-slate-900">Collect Fee</h1>
+        </div>
+        <SuccessScreen
+          receiptNumber={successData.result.receipt_number}
+          student={selectedStudent}
+          due={successData.due}
+          amountPaid={successData.amount}
+          paymentMethod={successData.method}
+          paidDate={successData.date}
+          school={school}
+          monthlyDues={successData.monthlyDues}
+          onCollectAnother={handleCollectAnother}
+          onClose={clearStudent}
+        />
+      </div>
+    )
+  }
+
+  // ── Render: Main ──────────────────────────────────────────────────────────
+  return (
+    <div className="max-w-2xl mx-auto">
+
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-6">
+        <Link href="/dashboard/fees" className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">
+          <ArrowLeft size={18} />
+        </Link>
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Collect Fee</h1>
+          <p className="text-slate-500 text-sm mt-0.5">Search by name, father's name, phone, or student ID</p>
+        </div>
+      </div>
+
+      {/* Omnibox search */}
+      <div className="relative mb-4">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              className="input pl-10 pr-10"
+              placeholder="Name, father's name, phone, or student ID…"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              autoComplete="off"
+            />
+            {query && (
+              <button
+                onClick={() => { setQuery(''); setResults([]) }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </div>
+
+          {/* Class filter toggle */}
+          <button
+            onClick={() => setShowClassFilter(v => !v)}
+            className={`flex items-center gap-1.5 px-3 border rounded-lg text-sm font-medium transition-colors ${
+              classFilter
+                ? 'bg-brand-600 text-white border-brand-600'
+                : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+            }`}
+          >
+            <Filter size={14} />
+            {classFilter
+              ? (classes.find(c => c.id === classFilter)?.name ?? 'Class')
+              : 'Class'}
+          </button>
+        </div>
+
+        {/* Class filter dropdown */}
+        {showClassFilter && (
+          <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 w-56 py-1 overflow-hidden">
+            <button
+              onClick={() => { setClassFilter(''); setShowClassFilter(false) }}
+              className={`w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 ${!classFilter ? 'font-semibold text-brand-600' : 'text-slate-700'}`}
+            >
+              All classes
+            </button>
+            {classes.map(c => (
+              <button
+                key={c.id}
+                onClick={() => { setClassFilter(c.id); setShowClassFilter(false) }}
+                className={`w-full text-left px-4 py-2.5 text-sm hover:bg-slate-50 ${classFilter === c.id ? 'font-semibold text-brand-600' : 'text-slate-700'}`}
+              >
+                {c.name}{c.section ? ` - ${c.section}` : ''}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Dropdown results */}
+        {(results.length > 0 || searching) && query.length >= 2 && (
+          <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg z-20 overflow-hidden">
+            {searching ? (
+              <div className="px-4 py-3 text-sm text-slate-400">Searching…</div>
+            ) : results.length === 0 ? (
+              <div className="px-4 py-3 text-sm text-slate-400">No students found</div>
+            ) : (
+              results.map(s => (
+                <button
+                  key={s.id}
+                  onClick={() => selectStudent(s)}
+                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left border-b border-slate-50 last:border-0"
+                >
+                  <div className="w-9 h-9 bg-brand-100 rounded-full flex items-center justify-center shrink-0">
+                    <span className="text-brand-700 font-bold text-sm">{s.full_name.charAt(0)}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-900 text-sm">{s.full_name}</p>
+                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                      {s.student_uid && (
+                        <span className="font-mono text-[11px] text-slate-500">{s.student_uid}</span>
+                      )}
+                      {s.father_name && (
+                        <span className="text-[11px] text-slate-400">· {s.father_name}</span>
+                      )}
+                      {s.class_name && (
+                        <span className="text-[11px] text-slate-400">
+                          · {s.class_name}{s.class_section ? ` - ${s.class_section}` : ''}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Active class filter badge */}
+      {classFilter && (
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs text-slate-500">Filtering by class:</span>
+          <span className="flex items-center gap-1 text-xs bg-brand-50 text-brand-700 border border-brand-200 px-2 py-0.5 rounded-full font-medium">
+            {classes.find(c => c.id === classFilter)?.name}
+            {classes.find(c => c.id === classFilter)?.section
+              ? ` - ${classes.find(c => c.id === classFilter)?.section}` : ''}
+            <button onClick={() => setClassFilter('')} className="ml-0.5 hover:text-brand-900">
+              <X size={11} />
+            </button>
+          </span>
+        </div>
+      )}
+
+      {/* Selected student */}
+      {selectedStudent && (
+        <>
+          <div className="card p-4 mb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 bg-brand-100 rounded-full flex items-center justify-center shrink-0">
+                  <span className="text-brand-700 font-bold">{selectedStudent.full_name.charAt(0)}</span>
+                </div>
+                <div>
+                  <p className="font-semibold text-slate-900">{selectedStudent.full_name}</p>
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    {selectedStudent.student_uid && (
+                      <span className="font-mono text-xs bg-brand-50 text-brand-700 border border-brand-200 px-1.5 py-0.5 rounded">
+                        {selectedStudent.student_uid}
+                      </span>
+                    )}
+                    {selectedStudent.class_name && (
+                      <span className="text-xs text-slate-500">
+                        {selectedStudent.class_name}
+                        {selectedStudent.class_section ? ` - ${selectedStudent.class_section}` : ''}
+                      </span>
+                    )}
+                    {selectedStudent.father_name && (
+                      <span className="text-xs text-slate-400">· {selectedStudent.father_name}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={clearStudent}
+                className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {!loadingDues && dues.length > 0 && (
+              <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-slate-100">
+                <div className="text-center">
+                  <p className="text-base font-bold text-red-600">{formatCurrency(totalPending)}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Outstanding</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-base font-bold text-green-600">{formatCurrency(totalPaid)}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Paid this year</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-base font-bold text-amber-600">{overdueCount}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Overdue</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Dues section */}
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm font-semibold text-slate-700">Fee dues</p>
+            <div className="flex gap-1.5">
+              {(['pending', 'all'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setFilter(f)}
+                  className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                    filter === f
+                      ? 'bg-brand-600 text-white border-brand-600'
+                      : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {f === 'pending' ? 'Pending only' : 'All dues'}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {loadingDues ? (
+            <div className="flex flex-col gap-2">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="border border-slate-200 rounded-xl p-3.5 animate-pulse">
+                  <div className="flex justify-between">
+                    <div className="h-4 w-32 bg-slate-100 rounded" />
+                    <div className="h-4 w-16 bg-slate-100 rounded" />
+                  </div>
+                  <div className="h-3 w-24 bg-slate-100 rounded mt-2" />
+                </div>
+              ))}
+            </div>
+          ) : filteredDues.length === 0 ? (
+            <div className="border border-dashed border-slate-200 rounded-xl py-10 text-center">
+              {filter === 'pending' ? (
+                <>
+                  <BadgeCheck size={28} className="mx-auto text-green-400 mb-2" />
+                  <p className="text-sm font-medium text-slate-600">All dues are paid</p>
+                  <p className="text-xs text-slate-400 mt-1">Switch to "All dues" to see history</p>
+                </>
+              ) : (
+                <>
+                  <Wallet size={28} className="mx-auto text-slate-300 mb-2" />
+                  <p className="text-sm font-medium text-slate-600">No fee dues found</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Dues are auto-generated from fee structures.
+                  </p>
+                </>
+              )}
+              <Link
+                href={`/dashboard/fees?student_uid=${selectedStudent.student_uid ?? ''}`}
+                className="inline-flex items-center gap-1.5 mt-4 text-xs text-brand-600 hover:underline font-medium"
+              >
+                <Plus size={13} /> Record a manual fee instead
+              </Link>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {filteredDues.map(due => (
+                <DueCard key={due.id} due={due} onCollect={setCollectingDue} />
+              ))}
+              <div className="mt-2 text-center">
+                <Link
+                  href={`/dashboard/fees?student_uid=${selectedStudent.student_uid ?? ''}`}
+                  className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-brand-600 transition-colors"
+                >
+                  <Plus size={13} /> Record a manual / miscellaneous fee
+                </Link>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Empty state */}
+      {!selectedStudent && !query && (
+        <div className="border border-dashed border-slate-200 rounded-2xl py-16 text-center">
+          <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Search size={22} className="text-slate-400" />
+          </div>
+          <h3 className="font-semibold text-slate-700">Search for a student</h3>
+          <p className="text-sm text-slate-400 mt-1 max-w-xs mx-auto">
+            Type a name, father's name, phone number, or student ID
+          </p>
+          <div className="flex items-center justify-center gap-4 mt-6 flex-wrap">
+            {[
+              [Clock,        'Auto-generated dues'],
+              [IndianRupee,  'Full or partial payment'],
+              [Printer,      'Instant receipt'],
+            ].map(([Icon, text], i) => (
+              <div key={i} className="flex items-center gap-1.5 text-xs text-slate-400">
+                {/* @ts-ignore */}
+                <Icon size={12} /> {text}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Collect modal */}
+      {collectingDue && selectedStudent && (
+        <CollectModal
+          due={collectingDue}
+          student={selectedStudent}
+          school={school}
+          onClose={() => setCollectingDue(null)}
+          onSuccess={handlePaymentSuccess}
+        />
+      )}
+    </div>
+  )
+}

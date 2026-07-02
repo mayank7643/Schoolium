@@ -1,6 +1,10 @@
 import { createClient } from '@/utils/supabase/server'
 import { redirect } from 'next/navigation'
-import { Users, IndianRupee, BookOpen, AlertCircle, TrendingUp, TrendingDown, Minus, ArrowRight } from 'lucide-react'
+import {
+  Users, IndianRupee, BookOpen, AlertCircle,
+  TrendingUp, TrendingDown, Minus, ArrowRight,
+  CalendarCheck, Wallet,
+} from 'lucide-react'
 import Link from 'next/link'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -9,7 +13,6 @@ function fmtINR(n: number) {
 }
 
 function monthRange(year: number, month: number) {
-  // Returns ISO strings for the first and last moment of a given month
   const first = new Date(year, month, 1).toISOString().split('T')[0]
   const last  = new Date(year, month + 1, 0).toISOString().split('T')[0]
   return { first, last }
@@ -34,113 +37,220 @@ export default async function DashboardPage() {
 
   const now       = new Date()
   const thisYear  = now.getFullYear()
-  const thisMonth = now.getMonth()         // 0-indexed
+  const thisMonth = now.getMonth()
   const lastMonth = thisMonth === 0 ? 11 : thisMonth - 1
   const lastYear  = thisMonth === 0 ? thisYear - 1 : thisYear
 
-  const { first: thisFirst, last: thisLast }   = monthRange(thisYear, thisMonth)
-  const { first: lastFirst, last: lastLast }   = monthRange(lastYear, lastMonth)
+  const { first: thisFirst, last: thisLast } = monthRange(thisYear, thisMonth)
+  const { first: lastFirst, last: lastLast } = monthRange(lastYear, lastMonth)
 
-  // ── Single Promise.all — all data in one round trip ──────────────────────
+  // ── Single Promise.all ────────────────────────────────────────────────────
   const [
     studentsRes,
     classesRes,
-    thisMonthFeesRes,
-    lastMonthFeesRes,
-    recentFeesRes,
-    defaultersRes,
+    // Structured fees — fee_payments this month
+    structuredThisMonthRes,
+    // Structured fees — fee_payments last month (trend)
+    structuredLastMonthRes,
+    // Structured outstanding — fee_dues balance
+    structuredOutstandingRes,
+    // Structured defaulters — via get_fee_dashboard_stats RPC
+    feeStatsRes,
+    // Manual fees — fees table this month (paid)
+    manualThisMonthRes,
+    // Manual fees — fees table last month paid (trend)
+    manualLastMonthRes,
+    // Manual fees — fees table pending/overdue (outstanding)
+    manualPendingRes,
+    // Recent activity — fee_payments (structured, newest first)
+    recentStructuredRes,
+    // Recent activity — fees table (manual, newest first)
+    recentManualRes,
+    // Defaulters from fee_dues (structured)
+    structuredDefaultersRes,
+    // Defaulters from fees table (manual overdue)
+    manualDefaultersRes,
   ] = await Promise.all([
-    // Total active students
     supabase
       .from('students')
       .select('id', { count: 'exact' })
       .eq('school_id', schoolId)
       .eq('is_active', true),
 
-    // Total classes
     supabase
       .from('classes')
       .select('id', { count: 'exact' })
       .eq('school_id', schoolId),
 
-    // This month's fees — paid_date for collected, created_at for pending/overdue
+    // Structured: fee_payments this month
     supabase
-      .from('fees')
-      .select('amount, status, paid_date, created_at')
+      .from('fee_payments')
+      .select('amount_paid')
       .eq('school_id', schoolId)
-      .gte('created_at', `${thisFirst}T00:00:00`)
-      .lte('created_at', `${thisLast}T23:59:59`),
+      .gte('paid_date', thisFirst)
+      .lte('paid_date', thisLast),
 
-    // Last month's fees (paid) — for comparison
+    // Structured: fee_payments last month
     supabase
-      .from('fees')
-      .select('amount, status')
+      .from('fee_payments')
+      .select('amount_paid')
       .eq('school_id', schoolId)
-      .eq('status', 'paid')
       .gte('paid_date', lastFirst)
       .lte('paid_date', lastLast),
 
-    // 5 most recent payments for the activity feed
+    // Structured: outstanding balances from fee_dues
     supabase
-      .from('fees')
-      .select('id, amount, status, fee_type, paid_date, created_at, receipt_number, students(full_name, student_uid)')
+      .from('fee_dues')
+      .select('balance, due_date')
       .eq('school_id', schoolId)
-      .order('created_at', { ascending: false })
-      .limit(5),
+      .in('status', ['unpaid', 'partial'])
+      .gt('balance', 0),
 
-    // Overdue fees — students who owe money
+    // Defaulters count + YTD stats via RPC
+    supabase.rpc('get_fee_dashboard_stats', { p_school_id: schoolId }),
+
+    // Manual collected this month: fee_payments already covers ALL payments
+    // (structured + manual both flow through fee_payments since billing is unified).
+    Promise.resolve({ data: [], error: null }),
+
+    // Manual collected last month: same reason — no-op slot.
+    Promise.resolve({ data: [], error: null }),
+
+    // Manual outstanding: fee_dues source='manual' with balance > 0
     supabase
-      .from('fees')
-      .select('student_id, amount, students(full_name, student_uid)')
+      .from('fee_dues')
+      .select('balance, due_date')
       .eq('school_id', schoolId)
-      .eq('status', 'overdue'),
+      .eq('source', 'manual')
+      .gt('balance', 0),
+
+    // Recent activity: all fee_payments (both paths), exclude REV- reversals
+    supabase
+      .from('fee_payments')
+      .select('id, amount_paid, paid_date, receipt_number, students(full_name, student_uid), fee_dues(label, source)')
+      .eq('school_id', schoolId)
+      .not('receipt_number', 'like', 'REV-%')
+      .order('created_at', { ascending: false })
+      .limit(60),
+
+    // No-op: recentManualRes slot (unified — label comes from fee_dues join above)
+    Promise.resolve({ data: [], error: null }),
+
+    // Defaulters — all sources: unpaid/partial fee_dues past due date
+    supabase
+      .from('fee_dues')
+      .select('student_id, balance, students(full_name, student_uid)')
+      .eq('school_id', schoolId)
+      .in('status', ['unpaid', 'partial'])
+      .lt('due_date', now.toISOString().split('T')[0])
+      .gt('balance', 0),
+
+    // No-op: manualDefaultersRes slot (already included in structuredDefaultersRes above)
+    Promise.resolve({ data: [], error: null }),
   ])
 
-  // ── Compute stats ─────────────────────────────────────────────────────────
+  // ── Compute stats — both sources combined ─────────────────────────────────
   const totalStudents = studentsRes.count ?? 0
   const totalClasses  = classesRes.count ?? 0
 
-  const thisMonthFees = thisMonthFeesRes.data ?? []
-  const thisCollected = thisMonthFees
-    .filter(f => f.status === 'paid')
-    .reduce((s, f) => s + Number(f.amount), 0)
-  const thisPending = thisMonthFees
-    .filter(f => f.status === 'pending')
-    .reduce((s, f) => s + Number(f.amount), 0)
-  const thisOverdue = thisMonthFees
-    .filter(f => f.status === 'overdue')
-    .reduce((s, f) => s + Number(f.amount), 0)
+  // This month collected — ALL payments go through fee_payments (unified billing)
+  const structuredThisMonth = (structuredThisMonthRes.data ?? [])
+    .reduce((s, p) => s + Number(p.amount_paid), 0)
+  const manualThisMonth = 0  // unified: manual payments are in fee_payments already
+  const thisCollected = structuredThisMonth
 
-  const lastCollected = (lastMonthFeesRes.data ?? [])
-    .reduce((s, f) => s + Number(f.amount), 0)
+  // Last month collected — same: all in fee_payments
+  const structuredLastMonth = (structuredLastMonthRes.data ?? [])
+    .reduce((s, p) => s + Number(p.amount_paid), 0)
+  const manualLastMonth = 0
+  const lastCollected = structuredLastMonth
 
-  // Trend: % change vs last month
-  const trendPct = lastCollected === 0
+  // Outstanding: structured fee_dues (unpaid/partial) + manual fee_dues (balance > 0)
+  const structuredOutstanding = (structuredOutstandingRes.data ?? [])
+    .reduce((s, d) => s + Number(d.balance), 0)
+  const manualOutstanding = (manualPendingRes.data ?? [])
+    .reduce((s, d) => s + Number(d.balance), 0)
+  const totalOutstanding = structuredOutstanding + manualOutstanding
+
+  // Overdue: structured past due date, + manual past due date
+  const structuredOverdue = (structuredOutstandingRes.data ?? [])
+    .filter(d => d.due_date && new Date(d.due_date) < now)
+    .reduce((s, d) => s + Number(d.balance), 0)
+  const manualOverdue = (manualPendingRes.data ?? [])
+    .filter((d: any) => d.due_date && new Date(d.due_date) < now)
+    .reduce((s: number, d: any) => s + Number(d.balance), 0)
+  const totalOverdue = structuredOverdue + manualOverdue
+
+  // Trend vs last month
+  const trendPct  = lastCollected === 0
     ? (thisCollected > 0 ? 100 : 0)
     : Math.round(((thisCollected - lastCollected) / lastCollected) * 100)
   const trendUp   = trendPct > 0
   const trendFlat = trendPct === 0
 
-  // Collection rate this month
-  const thisTotal = thisCollected + thisPending + thisOverdue
-  const collectionRate = thisTotal > 0 ? Math.round((thisCollected / thisTotal) * 100) : 0
+  // Defaulters — merge structured + manual, deduplicate by student_id
+  const defaulterMap: Record<string, { name: string; uid: string | null; total: number; structured: boolean }> = {}
 
-  // Defaulters — deduplicated by student
-  const defaulterMap: Record<string, { name: string; uid: string | null; total: number }> = {}
-  for (const f of defaultersRes.data ?? []) {
-    const s = f.students as any
-    if (!f.student_id) continue
-    if (!defaulterMap[f.student_id]) {
-      defaulterMap[f.student_id] = { name: s?.full_name ?? '—', uid: s?.student_uid, total: 0 }
+  for (const d of structuredDefaultersRes.data ?? []) {
+    const s = d.students as any
+    if (!d.student_id) continue
+    if (!defaulterMap[d.student_id]) {
+      defaulterMap[d.student_id] = { name: s?.full_name ?? '—', uid: s?.student_uid ?? null, total: 0, structured: true }
     }
-    defaulterMap[f.student_id].total += Number(f.amount)
+    defaulterMap[d.student_id].total += Number(d.balance)
   }
-  const defaulters = Object.values(defaulterMap).sort((a, b) => b.total - a.total).slice(0, 5)
+  // manualDefaultersRes is a no-op (manual dues already in structuredDefaultersRes above)
+  const defaulters     = Object.values(defaulterMap).sort((a, b) => b.total - a.total).slice(0, 5)
   const defaulterCount = Object.keys(defaulterMap).length
 
-  const recentFees = recentFeesRes.data ?? []
+  // YTD from RPC — covers all fee_payments (unified billing)
+  const feeStats    = (feeStatsRes.data as any)?.[0] ?? null
+  const combinedYtd = Number(feeStats?.total_collected_ytd ?? 0)
 
-  // Month label
+  // Recent activity — interleave structured + manual, sort by date, take top 6
+  type ActivityItem = {
+    id: string
+    name: string
+    uid: string | null
+    label: string
+    amount: number
+    date: string
+    source: 'structured' | 'manual'
+  }
+
+  // Group by receipt so one collection = one row (consistent with the Fees page).
+  const rawRecent = (recentStructuredRes.data ?? []) as any[]
+  const recentMap: Record<string, any[]> = {}
+  const recentOrder: string[] = []
+  for (const p of rawRecent) {
+    const key = p.receipt_number ?? p.id
+    if (!recentMap[key]) { recentMap[key] = []; recentOrder.push(key) }
+    recentMap[key].push(p)
+  }
+  const recentActivity: ActivityItem[] = recentOrder.slice(0, 6).map((key) => {
+    const rows  = recentMap[key]
+    const first = rows[0]
+    const due   = first.fee_dues as any
+    const isMan = due?.source === 'manual'
+    const total = rows.reduce((s, r) => s + Number(r.amount_paid), 0)
+    const label = rows.length > 1
+      ? `${rows.length} items`
+      : (due?.label ?? (isMan ? 'Manual fee' : 'Fee payment'))
+    return {
+      id:     key,
+      name:   first.students?.full_name ?? '—',
+      uid:    first.students?.student_uid ?? null,
+      label,
+      amount: total,
+      date:   first.paid_date,
+      source: isMan ? 'manual' : 'structured',
+    }
+  })
+
+  // Collection progress bar: collected vs total (collected + outstanding)
+  const thisTotal      = thisCollected + totalOutstanding
+  const collectionRate = thisTotal > 0 ? Math.round((thisCollected / thisTotal) * 100) : 0
+
   const monthLabel = now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
 
   return (
@@ -157,36 +267,31 @@ export default async function DashboardPage() {
       {/* ── Top stat cards ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-5">
 
-        {/* This month collected */}
+        {/* This month collected — combined */}
         <Link href="/dashboard/fees" className="stat-card hover:shadow-md transition-shadow">
           <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center mb-2">
             <IndianRupee size={16} className="text-green-600" />
           </div>
           <p className="text-xl lg:text-2xl font-bold text-slate-900 truncate">{fmtINR(thisCollected)}</p>
           <p className="text-xs text-slate-500">Collected this month</p>
-          {/* Trend vs last month */}
           <div className={`flex items-center gap-1 mt-1 text-xs font-medium ${
             trendUp ? 'text-green-600' : trendFlat ? 'text-slate-400' : 'text-red-500'
           }`}>
-            {trendFlat
-              ? <Minus size={12} />
-              : trendUp
-              ? <TrendingUp size={12} />
-              : <TrendingDown size={12} />}
-            <span>
-              {trendFlat ? 'Same as last month' : `${trendUp ? '+' : ''}${trendPct}% vs last month`}
-            </span>
+            {trendFlat ? <Minus size={12} /> : trendUp ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+            <span>{trendFlat ? 'Same as last month' : `${trendUp ? '+' : ''}${trendPct}% vs last month`}</span>
           </div>
         </Link>
 
-        {/* Pending this month */}
-        <Link href="/dashboard/fees" className="stat-card hover:shadow-md transition-shadow">
+        {/* Total outstanding — combined */}
+        <Link href="/dashboard/fees/defaulters" className="stat-card hover:shadow-md transition-shadow">
           <div className="w-8 h-8 rounded-lg bg-yellow-50 flex items-center justify-center mb-2">
-            <IndianRupee size={16} className="text-yellow-600" />
+            <Wallet size={16} className="text-yellow-600" />
           </div>
-          <p className="text-xl lg:text-2xl font-bold text-slate-900 truncate">{fmtINR(thisPending)}</p>
-          <p className="text-xs text-slate-500">Pending this month</p>
-          <p className="text-xs text-slate-400 mt-1">{fmtINR(thisOverdue)} overdue</p>
+          <p className="text-xl lg:text-2xl font-bold text-slate-900 truncate">{fmtINR(totalOutstanding)}</p>
+          <p className="text-xs text-slate-500">Total outstanding</p>
+          {totalOverdue > 0 && (
+            <p className="text-xs text-red-400 mt-1">{fmtINR(totalOverdue)} overdue</p>
+          )}
         </Link>
 
         {/* Total students */}
@@ -199,8 +304,8 @@ export default async function DashboardPage() {
           <p className="text-xs text-slate-400 mt-1">{totalClasses} class{totalClasses !== 1 ? 'es' : ''}</p>
         </Link>
 
-        {/* Defaulters */}
-        <Link href="/dashboard/fees/summary" className="stat-card hover:shadow-md transition-shadow">
+        {/* Defaulters — combined count */}
+        <Link href="/dashboard/fees/defaulters" className="stat-card hover:shadow-md transition-shadow">
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${
             defaulterCount > 0 ? 'bg-red-50' : 'bg-slate-50'
           }`}>
@@ -209,19 +314,24 @@ export default async function DashboardPage() {
           <p className={`text-xl lg:text-2xl font-bold ${defaulterCount > 0 ? 'text-red-500' : 'text-slate-900'}`}>
             {defaulterCount}
           </p>
-          <p className="text-xs text-slate-500">Overdue students</p>
+          <p className="text-xs text-slate-500">Defaulters</p>
           {defaulterCount > 0 && (
-            <p className="text-xs text-red-400 mt-1">{fmtINR(defaulters.reduce((s, d) => s + d.total, 0))} total</p>
+            <p className="text-xs text-red-400 mt-1">
+              {fmtINR(defaulters.reduce((s, d) => s + d.total, 0))} owed
+            </p>
           )}
         </Link>
 
       </div>
 
-      {/* ── Collection progress bar ── */}
+      {/* ── Collection progress bar — combined ── */}
       {thisTotal > 0 && (
         <div className="card mb-5">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-sm font-semibold text-slate-700">{monthLabel} collection</p>
+            <div>
+              <p className="text-sm font-semibold text-slate-700">{monthLabel} collection</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">Structured + manual fees combined</p>
+            </div>
             <span className={`text-sm font-semibold ${
               collectionRate >= 80 ? 'text-green-600' :
               collectionRate >= 50 ? 'text-yellow-600' : 'text-red-500'
@@ -229,30 +339,40 @@ export default async function DashboardPage() {
           </div>
           <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden flex">
             {thisCollected > 0 && (
-              <div className="bg-green-400 h-full rounded-full transition-all"
+              <div className="bg-green-400 h-full rounded-l-full transition-all"
                 style={{ width: `${Math.round((thisCollected / thisTotal) * 100)}%` }} />
             )}
-            {thisPending > 0 && (
-              <div className="bg-yellow-300 h-full"
-                style={{ width: `${Math.round((thisPending / thisTotal) * 100)}%` }} />
-            )}
-            {thisOverdue > 0 && (
-              <div className="bg-red-400 h-full"
-                style={{ width: `${Math.round((thisOverdue / thisTotal) * 100)}%` }} />
+            {totalOutstanding > 0 && (
+              <div className="bg-yellow-300 h-full rounded-r-full"
+                style={{ width: `${Math.round((totalOutstanding / thisTotal) * 100)}%` }} />
             )}
           </div>
-          <div className="flex items-center gap-4 mt-2">
+          <div className="flex items-center gap-4 mt-2 flex-wrap">
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
-              <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />Collected {fmtINR(thisCollected)}
+              <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
+              Collected {fmtINR(thisCollected)}
             </span>
             <span className="flex items-center gap-1.5 text-xs text-slate-500">
-              <span className="w-2 h-2 rounded-full bg-yellow-300 inline-block" />Pending {fmtINR(thisPending)}
+              <span className="w-2 h-2 rounded-full bg-yellow-300 inline-block" />
+              Outstanding {fmtINR(totalOutstanding)}
             </span>
-            {thisOverdue > 0 && (
-              <span className="flex items-center gap-1.5 text-xs text-slate-500">
-                <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />Overdue {fmtINR(thisOverdue)}
-              </span>
+            {totalOverdue > 0 && (
+              <span className="text-xs text-red-400">{fmtINR(totalOverdue)} overdue</span>
             )}
+          </div>
+
+          {/* Source breakdown row */}
+          <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-3">
+            <div>
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Structured fees</p>
+              <p className="text-sm font-semibold text-slate-800">{fmtINR(structuredThisMonth)}</p>
+              <p className="text-[11px] text-slate-400">{fmtINR(structuredOutstanding)} outstanding</p>
+            </div>
+            <div>
+              <p className="text-[10px] text-slate-400 uppercase tracking-wide mb-1">Manual fees</p>
+              <p className="text-sm font-semibold text-slate-800">{fmtINR(manualThisMonth)}</p>
+              <p className="text-[11px] text-slate-400">{fmtINR(manualOutstanding)} outstanding</p>
+            </div>
           </div>
         </div>
       )}
@@ -260,56 +380,50 @@ export default async function DashboardPage() {
       {/* ── Bottom two-column section ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
 
-        {/* Recent payments */}
+        {/* Recent payments — combined activity feed */}
         <div className="card p-0 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
             <h2 className="text-sm font-semibold text-slate-700">Recent payments</h2>
-            <Link href="/dashboard/fees" className="text-xs text-brand-600 hover:underline flex items-center gap-1">
-              View all <ArrowRight size={12} />
+            <Link href="/dashboard/fees/collect" className="text-xs text-brand-600 hover:underline flex items-center gap-1">
+              Collect fee <ArrowRight size={12} />
             </Link>
           </div>
-          {recentFees.length === 0 ? (
+          {recentActivity.length === 0 ? (
             <div className="px-5 py-8 text-center text-sm text-slate-400">No payments recorded yet</div>
           ) : (
             <div className="divide-y divide-slate-50">
-              {recentFees.map(fee => {
-                const student = fee.students as any
-                const isPaid  = fee.status === 'paid'
-                return (
-                  <div key={fee.id} className="flex items-center justify-between px-5 py-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-7 h-7 bg-brand-50 rounded-full flex items-center justify-center shrink-0">
-                        <span className="text-brand-700 font-semibold text-xs">
-                          {(student?.full_name ?? '?').charAt(0).toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium text-slate-800 truncate">{student?.full_name ?? '—'}</p>
-                        <p className="text-xs text-slate-400 capitalize">{fee.fee_type}</p>
-                      </div>
+              {recentActivity.map(item => (
+                <div key={`${item.source}-${item.id}`} className="flex items-center justify-between px-5 py-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-7 h-7 bg-brand-50 rounded-full flex items-center justify-center shrink-0">
+                      <span className="text-brand-700 font-semibold text-xs">
+                        {item.name.charAt(0).toUpperCase()}
+                      </span>
                     </div>
-                    <div className="text-right shrink-0 ml-3">
-                      <p className={`text-sm font-semibold ${isPaid ? 'text-green-600' : 'text-yellow-600'}`}>
-                        {fmtINR(Number(fee.amount))}
-                      </p>
-                      <p className="text-[10px] text-slate-400">
-                        {fee.paid_date
-                          ? new Date(fee.paid_date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
-                          : new Date(fee.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                      </p>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
+                      <p className="text-xs text-slate-400 capitalize">{item.label}</p>
                     </div>
                   </div>
-                )
-              })}
+                  <div className="text-right shrink-0 ml-3">
+                    <p className="text-sm font-semibold text-green-600">{fmtINR(item.amount)}</p>
+                    <p className="text-[10px] text-slate-400">
+                      {item.date
+                        ? new Date(item.date + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })
+                        : '—'}
+                    </p>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
 
-        {/* Defaulters */}
+        {/* Defaulters — combined */}
         <div className="card p-0 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-            <h2 className="text-sm font-semibold text-slate-700">Overdue students</h2>
-            <Link href="/dashboard/fees/summary" className="text-xs text-brand-600 hover:underline flex items-center gap-1">
+            <h2 className="text-sm font-semibold text-slate-700">Defaulters</h2>
+            <Link href="/dashboard/fees/defaulters" className="text-xs text-brand-600 hover:underline flex items-center gap-1">
               View all <ArrowRight size={12} />
             </Link>
           </div>
@@ -340,10 +454,10 @@ export default async function DashboardPage() {
                   <div className="text-right shrink-0 ml-3">
                     <p className="text-sm font-semibold text-red-500">{fmtINR(d.total)}</p>
                     <Link
-                      href={`/dashboard/fees?student_uid=${d.uid ?? ''}`}
+                      href={`/dashboard/fees/collect?student_uid=${d.uid ?? ''}`}
                       className="text-[10px] text-brand-600 hover:underline"
                     >
-                      Record →
+                      Collect →
                     </Link>
                   </div>
                 </div>
@@ -358,10 +472,11 @@ export default async function DashboardPage() {
       <div className="card">
         <h2 className="text-sm font-semibold text-slate-700 mb-3">Quick actions</h2>
         <div className="flex flex-wrap gap-2 lg:gap-3">
-          <Link href="/dashboard/students/new" className="btn-primary text-sm">+ Add student</Link>
-          <Link href="/dashboard/fees" className="btn-secondary text-sm">Record payment</Link>
-          <Link href="/dashboard/fees/summary" className="btn-secondary text-sm">Fee summary</Link>
-          <Link href="/dashboard/classes" className="btn-secondary text-sm">Manage classes</Link>
+          <Link href="/dashboard/students/new"    className="btn-primary text-sm">+ Add student</Link>
+          <Link href="/dashboard/fees/collect"    className="btn-secondary text-sm">Collect fee</Link>
+          <Link href="/dashboard/fees/defaulters" className="btn-secondary text-sm">View defaulters</Link>
+          <Link href="/dashboard/fees/structures" className="btn-secondary text-sm">Fee structures</Link>
+          <Link href="/dashboard/classes"         className="btn-secondary text-sm">Manage classes</Link>
         </div>
       </div>
 

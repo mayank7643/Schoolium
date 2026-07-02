@@ -10,7 +10,8 @@ import { createClient } from '@/utils/supabase/client'
 import {
   ArrowLeft, Phone, Mail, MapPin, Calendar, Pencil,
   Trash2, X, Save, Eye, EyeOff, IndianRupee, QrCode, Printer,
-  CalendarCheck, LogIn, LogOut as LogOutIcon, TrendingUp
+  CalendarCheck, LogIn, LogOut as LogOutIcon, TrendingUp,
+  Package, CheckCircle2, AlertCircle, ChevronDown
 } from 'lucide-react'
 
 interface StudentData {
@@ -29,6 +30,7 @@ interface StudentData {
   is_active: boolean
   admission_date: string
   class_id: string | null
+  fee_structure_id: string | null
   classes?: { id: string; name: string; section: string | null } | null
 }
 
@@ -51,6 +53,13 @@ interface AttendanceRecord {
 }
 
 interface ClassOption { id: string; name: string; section: string | null }
+
+interface FeeStructureOption {
+  id: string
+  name: string
+  academic_year: string
+  is_active: boolean
+}
 
 function formatAadhaar(value: string): string {
   const digits = value.replace(/\D/g, '').slice(0, 12)
@@ -274,6 +283,7 @@ export default function StudentDetailPage() {
   const [student,           setStudent]           = useState<StudentData | null>(null)
   const [fees,              setFees]              = useState<FeeRecord[]>([])
   const [classes,           setClasses]           = useState<ClassOption[]>([])
+  const [feeStructures,     setFeeStructures]     = useState<FeeStructureOption[]>([])
   const [loading,           setLoading]           = useState(true)
   const [editing,           setEditing]           = useState(false)
   const [saving,            setSaving]            = useState(false)
@@ -285,6 +295,15 @@ export default function StudentDetailPage() {
   const [error,             setError]             = useState('')
   const [form,              setForm]              = useState<Partial<StudentData>>({})
 
+  // Fee Package state
+  const [selectedStructureId, setSelectedStructureId] = useState<string>('')
+  const [pkgSaving,           setPkgSaving]           = useState(false)
+  const [pkgSuccess,          setPkgSuccess]          = useState('')
+  const [pkgError,            setPkgError]            = useState('')
+  const [showGenPrompt,       setShowGenPrompt]       = useState(false)
+  const [genLoading,          setGenLoading]          = useState(false)
+  const [genResult,           setGenResult]           = useState<{ generated: number; skipped: number } | null>(null)
+
   // Attendance history
   const [attendance,        setAttendance]        = useState<AttendanceRecord[]>([])
   const [attendanceMonth,   setAttendanceMonth]   = useState(() => {
@@ -294,7 +313,7 @@ export default function StudentDetailPage() {
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
-    const [studentRes, feesRes, classesRes, profileRes, attendanceRes] = await Promise.all([
+    const [studentRes, feesRes, classesRes, profileRes, attendanceRes, structuresRes] = await Promise.all([
       supabase.from('students').select('*, classes(id, name, section)').eq('id', studentId).single(),
       supabase.from('fees').select('*').eq('student_id', studentId).order('created_at', { ascending: false }),
       supabase.from('classes').select('id, name, section').order('name'),
@@ -306,13 +325,20 @@ export default function StudentDetailPage() {
         .order('scan_date', { ascending: false })
         .order('entry_type',  { ascending: true })
         .limit(200),
+      supabase.from('fee_structures')
+        .select('id, name, academic_year, is_active')
+        .eq('is_active', true)
+        .order('name'),
     ])
     if (studentRes.data) {
-      setStudent(studentRes.data as StudentData)
-      setForm(studentRes.data as StudentData)
+      const s = studentRes.data as StudentData
+      setStudent(s)
+      setForm(s)
+      setSelectedStructureId(s.fee_structure_id ?? '')
     }
     setFees((feesRes.data ?? []) as FeeRecord[])
     setClasses((classesRes.data ?? []) as ClassOption[])
+    setFeeStructures((structuresRes.data ?? []) as FeeStructureOption[])
     if (profileRes.data) {
       const p = profileRes.data as any
       setSchoolName(
@@ -367,6 +393,53 @@ export default function StudentDetailPage() {
     await supabase.from('students').update({ is_active: false }).eq('id', studentId)
     router.push('/dashboard/students')
     router.refresh()
+  }
+
+  async function handleAssignPackage() {
+    if (!student) return
+    setPkgSaving(true); setPkgError(''); setPkgSuccess(''); setGenResult(null)
+    const supabase = createClient()
+    const structureId = selectedStructureId || null
+    const { error: rpcError } = await supabase.rpc('assign_student_fee_structure', {
+      p_student_id: studentId,
+      p_fee_structure_id: structureId,
+    })
+    if (rpcError) {
+      setPkgError(rpcError.message)
+      setPkgSaving(false)
+      return
+    }
+    // Update local student state
+    setStudent(prev => prev ? { ...prev, fee_structure_id: structureId } : prev)
+    setPkgSuccess(structureId ? 'Fee package assigned.' : 'Package removed.')
+    setPkgSaving(false)
+    // Only prompt to generate dues when assigning (not unassigning)
+    if (structureId) {
+      setShowGenPrompt(true)
+    }
+    setTimeout(() => setPkgSuccess(''), 3000)
+  }
+
+  async function handleGenerateDues() {
+    if (!student?.fee_structure_id && !selectedStructureId) return
+    setGenLoading(true); setPkgError('')
+    const supabase = createClient()
+    const { data, error: rpcError } = await supabase.rpc('generate_fee_dues_capped', {
+      p_fee_structure_id: student?.fee_structure_id ?? selectedStructureId,
+      p_school_id: null, // RPC resolves school_id from admin profile
+    })
+    setGenLoading(false)
+    setShowGenPrompt(false)
+    if (rpcError) {
+      setPkgError(rpcError.message)
+      return
+    }
+    const result = data as any
+    setGenResult({
+      generated: result?.generated_count ?? 0,
+      skipped:   result?.skipped_count ?? 0,
+    })
+    setTimeout(() => setGenResult(null), 5000)
   }
 
   if (loading) {
@@ -560,6 +633,119 @@ export default function StudentDetailPage() {
 
         {/* Right — fees */}
         <div className="md:col-span-2 flex flex-col gap-5">
+
+          {/* ── Fee Package card ─────────────────────────────── */}
+          <div className="card">
+            <div className="flex items-center gap-2 mb-4">
+              <Package size={17} className="text-brand-600" />
+              <h3 className="font-semibold text-slate-800">Fee Package</h3>
+              {student.fee_structure_id ? (
+                <span className="badge-green ml-auto">Assigned</span>
+              ) : (
+                <span className="badge-yellow ml-auto">Not assigned</span>
+              )}
+            </div>
+
+            {/* Current assignment display */}
+            {student.fee_structure_id && (
+              <div className="bg-brand-50 border border-brand-100 rounded-lg px-3 py-2 mb-3 flex items-center gap-2">
+                <CheckCircle2 size={14} className="text-brand-600 shrink-0" />
+                <span className="text-sm text-brand-800 font-medium">
+                  {feeStructures.find(s => s.id === student.fee_structure_id)?.name ?? 'Loading…'}
+                </span>
+              </div>
+            )}
+
+            {/* Dropdown + Save button */}
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <label className="label">Select fee structure</label>
+                <select
+                  className="input text-sm"
+                  value={selectedStructureId}
+                  onChange={e => { setSelectedStructureId(e.target.value); setPkgError(''); setPkgSuccess('') }}
+                >
+                  <option value="">— No package —</option>
+                  {feeStructures.map(fs => (
+                    <option key={fs.id} value={fs.id}>
+                      {fs.name} ({fs.academic_year})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={handleAssignPackage}
+                disabled={pkgSaving || selectedStructureId === (student.fee_structure_id ?? '')}
+                className="btn-primary text-sm py-2 px-4 shrink-0"
+              >
+                {pkgSaving ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Saving
+                  </span>
+                ) : 'Save'}
+              </button>
+            </div>
+
+            {/* Unassign link — only when a package is currently assigned */}
+            {student.fee_structure_id && selectedStructureId === student.fee_structure_id && (
+              <button
+                onClick={() => setSelectedStructureId('')}
+                className="mt-2 text-xs text-red-500 hover:text-red-700 transition-colors"
+              >
+                Remove package assignment
+              </button>
+            )}
+
+            {/* Feedback */}
+            {pkgError && (
+              <div className="flex items-center gap-2 mt-3 text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg">
+                <AlertCircle size={13} className="shrink-0" /> {pkgError}
+              </div>
+            )}
+            {pkgSuccess && (
+              <div className="flex items-center gap-2 mt-3 text-xs text-green-700 bg-green-50 px-3 py-2 rounded-lg">
+                <CheckCircle2 size={13} className="shrink-0" /> {pkgSuccess}
+              </div>
+            )}
+
+            {/* Generate dues prompt */}
+            {showGenPrompt && (
+              <div className="mt-3 border border-brand-100 bg-brand-50 rounded-xl px-3 py-3">
+                <p className="text-sm text-slate-700 font-medium mb-1">Generate dues now?</p>
+                <p className="text-xs text-slate-500 mb-3">
+                  This will create pending fee entries for the current month based on the assigned structure.
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleGenerateDues}
+                    disabled={genLoading}
+                    className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5"
+                  >
+                    {genLoading ? (
+                      <><span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" /> Generating</>
+                    ) : 'Yes, generate'}
+                  </button>
+                  <button
+                    onClick={() => setShowGenPrompt(false)}
+                    className="btn-secondary text-xs py-1.5 px-3"
+                  >
+                    Skip
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Generation result */}
+            {genResult && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-green-700 bg-green-50 px-3 py-2 rounded-lg">
+                <CheckCircle2 size={13} className="shrink-0" />
+                {genResult.generated} dues generated, {genResult.skipped} skipped (already exist)
+              </div>
+            )}
+          </div>
+
+          {/* ── Fee stats ──────────────────────────────────────── */}
           <div className="grid grid-cols-2 gap-4">
             <div className="stat-card">
               <div className="w-8 h-8 bg-green-50 rounded-lg flex items-center justify-center mb-2">
@@ -578,14 +764,22 @@ export default function StudentDetailPage() {
           </div>
 
           <div className="card">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h3 className="font-semibold text-slate-800">Fee history</h3>
-              <Link
-                href={`/dashboard/fees${student.student_uid ? `?student_uid=${student.student_uid}` : ''}`}
-                className="btn-primary flex items-center gap-1.5 text-xs py-1.5 px-3"
-              >
-                <IndianRupee size={13} /> Record payment
-              </Link>
+              <div className="flex items-center gap-2">
+                <Link
+                  href={`/dashboard/fees/ledger/${student.id}`}
+                  className="btn-secondary flex items-center gap-1.5 text-xs py-1.5 px-3"
+                >
+                  <IndianRupee size={13} /> Fee Ledger
+                </Link>
+                <Link
+                  href={`/dashboard/fees/collect?student_id=${student.id}`}
+                  className="btn-primary flex items-center gap-1.5 text-xs py-1.5 px-3"
+                >
+                  <IndianRupee size={13} /> Collect Fee
+                </Link>
+              </div>
             </div>
             {fees.length > 0 ? (
               <div className="flex flex-col gap-2">

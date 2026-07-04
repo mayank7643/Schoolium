@@ -1,14 +1,15 @@
 'use client'
 
 // FILE: app/(dashboard)/dashboard/fees/reversals/page.tsx
-// Admin-only: reversal request queue
-// Collector requests → admin approves or rejects here
+// Admin-only: reversal request queue.
+// Collector requests (full receipt or a subset of lines) -> admin approves or
+// rejects the whole group here. Lines requested together share a group id.
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/client'
 import {
-  ArrowLeft, CheckCircle2, X, AlertCircle,
+  ArrowLeft, CheckCircle2, AlertCircle,
   RotateCcw, Clock, Ban,
 } from 'lucide-react'
 
@@ -19,7 +20,7 @@ interface ReversalRequest {
   requested_at: string
   reviewed_at: string | null
   admin_notes: string | null
-  requested_by_profile: { full_name: string; role: string } | null
+  reversal_group_id: string | null
   fee_payments: {
     id: string
     amount_paid: number
@@ -29,6 +30,21 @@ interface ReversalRequest {
     students: { full_name: string; student_uid: string | null } | null
     fee_dues: { label: string } | null
   } | null
+}
+
+interface ReversalGroup {
+  groupId: string
+  status: string
+  requestedAt: string
+  adminNotes: string | null
+  reason: string
+  studentName: string
+  studentUid: string | null
+  receiptNumber: string | null
+  paymentMethod: string | null
+  paidDate: string | null
+  total: number
+  lines: { label: string; amount: number }[]
 }
 
 function fmt(n: number) {
@@ -42,13 +58,44 @@ function fmtDate(d: string) {
   })
 }
 
+function buildGroups(reqs: ReversalRequest[]): ReversalGroup[] {
+  const map = new Map<string, ReversalRequest[]>()
+  for (const r of reqs) {
+    const key = r.reversal_group_id ?? r.id
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(r)
+  }
+  const groups: ReversalGroup[] = Array.from(map.entries()).map(([groupId, rows]) => {
+    const first = rows[0]
+    const fp0 = first.fee_payments as any
+    return {
+      groupId,
+      status: first.status,
+      requestedAt: first.requested_at,
+      adminNotes: first.admin_notes,
+      reason: first.reason,
+      studentName: fp0?.students?.full_name ?? '—',
+      studentUid: fp0?.students?.student_uid ?? null,
+      receiptNumber: fp0?.receipt_number ?? null,
+      paymentMethod: fp0?.payment_method ?? null,
+      paidDate: fp0?.paid_date ?? null,
+      total: rows.reduce((s, r) => s + Number((r.fee_payments as any)?.amount_paid ?? 0), 0),
+      lines: rows.map(r => ({
+        label: (r.fee_payments as any)?.fee_dues?.label ?? 'Fee',
+        amount: Number((r.fee_payments as any)?.amount_paid ?? 0),
+      })),
+    }
+  })
+  groups.sort((a, b) => +new Date(b.requestedAt) - +new Date(a.requestedAt))
+  return groups
+}
+
 export default function ReversalsPage() {
   const [requests,   setRequests]   = useState<ReversalRequest[]>([])
   const [loading,    setLoading]    = useState(true)
   const [isAdmin,    setIsAdmin]    = useState(false)
   const [activeTab,  setActiveTab]  = useState<'pending' | 'resolved'>('pending')
 
-  // Per-request action state
   const [actionId,   setActionId]   = useState<string | null>(null)
   const [adminNotes, setAdminNotes] = useState('')
   const [saving,     setSaving]     = useState(false)
@@ -68,11 +115,11 @@ export default function ReversalsPage() {
     }
     setIsAdmin(true)
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('reversal_requests')
       .select(`
-        id, reason, status, requested_at, reviewed_at, admin_notes,
-        fee_payments(
+        id, reason, status, requested_at, reviewed_at, admin_notes, reversal_group_id,
+        fee_payments!fee_payment_id(
           id, amount_paid, payment_method, receipt_number, paid_date,
           students(full_name, student_uid),
           fee_dues(label)
@@ -81,43 +128,41 @@ export default function ReversalsPage() {
       .eq('school_id', (profile as any).school_id)
       .order('requested_at', { ascending: false })
 
+    if (error) console.error('reversal_requests fetch failed:', error.message)
     setRequests((data ?? []) as any as ReversalRequest[])
     setLoading(false)
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  async function handleApprove(requestId: string) {
+  async function handleApprove(groupId: string) {
     setSaving(true); setSaveError('')
     const supabase = createClient()
-    const { error } = await supabase.rpc('approve_payment_reversal', {
-      p_request_id:  requestId,
+    const { error } = await supabase.rpc('approve_reversal_group', {
+      p_group_id:    groupId,
       p_admin_notes: adminNotes || null,
     })
     if (error) { setSaveError(error.message); setSaving(false); return }
-    setSaving(false)
-    setActionId(null)
-    setAdminNotes('')
+    setSaving(false); setActionId(null); setAdminNotes('')
     fetchData()
   }
 
-  async function handleReject(requestId: string) {
+  async function handleReject(groupId: string) {
     if (!adminNotes.trim()) { setSaveError('Notes are required when rejecting'); return }
     setSaving(true); setSaveError('')
     const supabase = createClient()
-    const { error } = await supabase.rpc('reject_payment_reversal', {
-      p_request_id:  requestId,
+    const { error } = await supabase.rpc('reject_reversal_group', {
+      p_group_id:    groupId,
       p_admin_notes: adminNotes.trim(),
     })
     if (error) { setSaveError(error.message); setSaving(false); return }
-    setSaving(false)
-    setActionId(null)
-    setAdminNotes('')
+    setSaving(false); setActionId(null); setAdminNotes('')
     fetchData()
   }
 
-  const pending  = requests.filter(r => r.status === 'pending')
-  const resolved = requests.filter(r => r.status !== 'pending')
+  const groups   = buildGroups(requests)
+  const pending  = groups.filter(g => g.status === 'pending')
+  const resolved = groups.filter(g => g.status !== 'pending')
 
   if (!loading && !isAdmin) {
     return (
@@ -134,7 +179,6 @@ export default function ReversalsPage() {
 
   return (
     <div className="max-w-2xl mx-auto">
-
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
         <Link href="/dashboard/fees" className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-500">
@@ -185,82 +229,93 @@ export default function ReversalsPage() {
         </div>
       ) : (
         <div className="flex flex-col gap-3">
-          {displayList.map(req => {
-            const fp = req.fee_payments as any
-            const isActive = actionId === req.id
+          {displayList.map(g => {
+            const isActive = actionId === g.groupId
             return (
-              <div key={req.id} className={`card p-0 overflow-hidden ${req.status === 'pending' ? 'border-amber-200' : ''}`}>
-
+              <div key={g.groupId} className={`card p-0 overflow-hidden ${g.status === 'pending' ? 'border-amber-200' : ''}`}>
                 {/* Status bar */}
                 <div className={`px-4 py-2.5 flex items-center justify-between ${
-                  req.status === 'pending'  ? 'bg-amber-50 border-b border-amber-100' :
-                  req.status === 'approved' ? 'bg-green-50 border-b border-green-100' :
-                                              'bg-slate-50 border-b border-slate-100'
+                  g.status === 'pending'  ? 'bg-amber-50 border-b border-amber-100' :
+                  g.status === 'approved' ? 'bg-green-50 border-b border-green-100' :
+                                            'bg-slate-50 border-b border-slate-100'
                 }`}>
                   <div className="flex items-center gap-2">
-                    {req.status === 'pending'  && <Clock size={13} className="text-amber-600" />}
-                    {req.status === 'approved' && <CheckCircle2 size={13} className="text-green-600" />}
-                    {req.status === 'rejected' && <Ban size={13} className="text-slate-500" />}
+                    {g.status === 'pending'  && <Clock size={13} className="text-amber-600" />}
+                    {g.status === 'approved' && <CheckCircle2 size={13} className="text-green-600" />}
+                    {g.status === 'rejected' && <Ban size={13} className="text-slate-500" />}
                     <span className={`text-xs font-semibold capitalize ${
-                      req.status === 'pending' ? 'text-amber-700' :
-                      req.status === 'approved' ? 'text-green-700' : 'text-slate-600'
+                      g.status === 'pending' ? 'text-amber-700' :
+                      g.status === 'approved' ? 'text-green-700' : 'text-slate-600'
                     }`}>
-                      {req.status}
+                      {g.status}
                     </span>
                   </div>
-                  <span className="text-[10px] text-slate-400">{fmtDate(req.requested_at)}</span>
+                  <span className="text-[10px] text-slate-400">{fmtDate(g.requestedAt)}</span>
                 </div>
 
                 <div className="p-4">
-                  {/* Payment info */}
+                  {/* Header row */}
                   <div className="flex items-start justify-between gap-3 mb-3">
                     <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-slate-900">{fp?.students?.full_name ?? '—'}</p>
+                      <p className="font-semibold text-slate-900">{g.studentName}</p>
                       <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        {fp?.students?.student_uid && (
+                        {g.studentUid && (
                           <span className="font-mono text-[11px] bg-brand-50 text-brand-700 border border-brand-200 px-1.5 py-0.5 rounded">
-                            {fp.students.student_uid}
+                            {g.studentUid}
                           </span>
                         )}
-                        {fp?.receipt_number && (
-                          <span className="text-[11px] text-slate-400 font-mono">{fp.receipt_number}</span>
+                        {g.receiptNumber && (
+                          <span className="text-[11px] text-slate-400 font-mono">{g.receiptNumber}</span>
                         )}
-                        {fp?.paid_date && (
+                        {g.paidDate && (
                           <span className="text-xs text-slate-400">
-                            · {new Date(fp.paid_date + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                            · {new Date(g.paidDate + 'T00:00:00').toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
                           </span>
                         )}
                       </div>
-                      {fp?.fee_dues?.label && (
-                        <p className="text-xs text-slate-500 mt-1">{fp.fee_dues.label}</p>
-                      )}
                     </div>
                     <div className="text-right shrink-0">
-                      <p className="text-lg font-bold text-red-500">{fp ? fmt(fp.amount_paid) : '—'}</p>
-                      <p className="text-[10px] text-slate-400 capitalize">{fp?.payment_method?.replace('_',' ')}</p>
+                      <p className="text-lg font-bold text-red-500">{fmt(g.total)}</p>
+                      <p className="text-[10px] text-slate-400 capitalize">{g.paymentMethod?.replace('_', ' ')}</p>
                     </div>
+                  </div>
+
+                  {/* Line breakdown */}
+                  <div className="rounded-xl border border-slate-100 divide-y divide-slate-50 mb-3">
+                    {g.lines.map((l, i) => (
+                      <div key={i} className="flex items-center justify-between px-3 py-2 text-sm">
+                        <span className="text-slate-600 truncate mr-3">{l.label}</span>
+                        <span className="font-medium text-slate-800">{fmt(l.amount)}</span>
+                      </div>
+                    ))}
+                    {g.lines.length > 1 && (
+                      <div className="flex items-center justify-between px-3 py-2 text-sm bg-slate-50">
+                        <span className="text-slate-500 font-medium">{g.lines.length} lines</span>
+                        <span className="font-bold text-slate-900">{fmt(g.total)}</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Reason */}
                   <div className="bg-slate-50 rounded-xl px-3 py-2.5 mb-3">
                     <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Reason given</p>
-                    <p className="text-sm text-slate-700">{req.reason}</p>
+                    <p className="text-sm text-slate-700">{g.reason}</p>
                   </div>
 
                   {/* Admin notes (resolved) */}
-                  {req.admin_notes && (
+                  {g.adminNotes && (
                     <div className="bg-slate-50 rounded-xl px-3 py-2.5 mb-3">
                       <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-1">Admin notes</p>
-                      <p className="text-sm text-slate-700">{req.admin_notes}</p>
+                      <p className="text-sm text-slate-700">{g.adminNotes}</p>
                     </div>
                   )}
 
                   {/* Action panel — pending only */}
-                  {req.status === 'pending' && (
+                  {g.status === 'pending' && (
                     <>
                       {!isActive ? (
                         <button
-                          onClick={() => { setActionId(req.id); setAdminNotes(''); setSaveError('') }}
+                          onClick={() => { setActionId(g.groupId); setAdminNotes(''); setSaveError('') }}
                           className="btn-primary text-sm w-full py-2"
                         >
                           Review this request
@@ -290,14 +345,14 @@ export default function ReversalsPage() {
                               Cancel
                             </button>
                             <button
-                              onClick={() => handleReject(req.id)}
+                              onClick={() => handleReject(g.groupId)}
                               disabled={saving}
                               className="text-sm py-2 border border-red-200 text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors disabled:opacity-50"
                             >
                               Reject
                             </button>
                             <button
-                              onClick={() => handleApprove(req.id)}
+                              onClick={() => handleApprove(g.groupId)}
                               disabled={saving}
                               className="btn-primary text-sm py-2 disabled:opacity-50"
                             >
@@ -310,7 +365,7 @@ export default function ReversalsPage() {
                             </button>
                           </div>
                           <p className="text-[10px] text-slate-400 text-center">
-                            Approval creates a counter-transaction. The original receipt is preserved.
+                            Approval reverses every line above with a counter-transaction. Original receipt preserved.
                           </p>
                         </div>
                       )}

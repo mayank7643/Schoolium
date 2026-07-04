@@ -1,4 +1,4 @@
--- ============================================================
+--- ============================================================
 -- SCHOOLIUM — FINAL CLEAN MIGRATION
 -- Migration Name: 003_attendance_and_guard_roles
 -- Generated: 2026-06-13

@@ -14,6 +14,7 @@ import {
   CalendarCheck,
   LogOut,
   School,
+  Settings,
   X,
   Menu,
 } from 'lucide-react'
@@ -108,6 +109,9 @@ export default function Sidebar({ profile }: SidebarProps) {
 
         <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
           {navItems.map(item => <NavLink key={item.href} {...item} />)}
+          {profile?.role === 'school_admin' && (
+            <NavLink href="/dashboard/settings" icon={Settings} label="Settings" />
+          )}
         </nav>
 
         <div className="px-3 py-4 border-t border-slate-100">

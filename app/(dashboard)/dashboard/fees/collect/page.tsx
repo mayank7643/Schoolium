@@ -201,7 +201,7 @@ function SuccessScreen({
 
   // Reversal request state
   const [showReversalForm, setShowReversalForm] = useState(false)
-  const [reversalPaymentId, setReversalPaymentId] = useState<string>('')
+  const [reversalSelected,  setReversalSelected]  = useState<string[]>([])
   const [reversalReason,    setReversalReason]    = useState('')
   const [reversalSaving,    setReversalSaving]    = useState(false)
   const [reversalError,     setReversalError]     = useState('')
@@ -218,18 +218,17 @@ function SuccessScreen({
   }
 
   async function handleRequestReversal() {
-    if (!reversalPaymentId) { setReversalError('Select which payment to reverse'); return }
+    if (reversalSelected.length === 0) { setReversalError('Select at least one item to reverse'); return }
     if (!reversalReason.trim()) { setReversalError('Reason is required'); return }
     setReversalSaving(true)
     setReversalError('')
     const supabase = createClient()
-    const { error } = await supabase.rpc('request_payment_reversal', {
-      p_fee_payment_id: reversalPaymentId,
-      p_reason:         reversalReason.trim(),
+    const { error } = await supabase.rpc('request_payment_reversals', {
+      p_fee_payment_ids: reversalSelected,
+      p_reason:          reversalReason.trim(),
     })
     if (error) { setReversalError(error.message); setReversalSaving(false); return }
-    const line = lines.find(l => l.payment_id === reversalPaymentId)
-    setReversalDone(line?.receipt_number ?? 'payment')
+    setReversalDone(lines[0]?.receipt_number ?? 'payment')
     setReversalSaving(false)
     setShowReversalForm(false)
   }
@@ -342,8 +341,7 @@ function SuccessScreen({
         <button
           onClick={() => {
             setShowReversalForm(true)
-            // Pre-select if only one payment
-            if (lines.length === 1) setReversalPaymentId(lines[0].payment_id)
+            setReversalSelected(lines.map(l => l.payment_id))
           }}
           className="text-xs text-red-400 hover:text-red-600 text-center py-1 transition-colors"
         >
@@ -366,24 +364,43 @@ function SuccessScreen({
             The original receipt is always preserved.
           </p>
 
-          {/* Payment selector — only show if multiple payments in this session */}
-          {lines.length > 1 && (
-            <div>
-              <label className="label text-red-700">Which payment to reverse *</label>
-              <select
-                className="input text-sm"
-                value={reversalPaymentId}
-                onChange={e => { setReversalPaymentId(e.target.value); setReversalError('') }}
-              >
-                <option value="">Select payment</option>
-                {lines.map(l => (
-                  <option key={l.payment_id} value={l.payment_id}>
-                    {l.label} — {fmt(l.amount)} ({l.receipt_number})
-                  </option>
-                ))}
-              </select>
+          {/* Line selection — tick items to reverse (all ticked = full reversal) */}
+          <div>
+            <label className="label text-red-700">Items to reverse *</label>
+            <div className="rounded-lg border border-red-100 bg-white divide-y divide-red-50">
+              {lines.map(l => {
+                const checked = reversalSelected.includes(l.payment_id)
+                return (
+                  <label key={l.payment_id} className="flex items-center gap-2 px-2.5 py-2 cursor-pointer text-sm">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => setReversalSelected(prev =>
+                        prev.includes(l.payment_id) ? prev.filter(x => x !== l.payment_id) : [...prev, l.payment_id]
+                      )}
+                      className="accent-red-500"
+                    />
+                    <span className="flex-1 truncate text-slate-700">{l.label}</span>
+                    <span className="font-medium text-slate-800 shrink-0">{fmt(l.amount)}</span>
+                  </label>
+                )
+              })}
+              <div className="flex items-center justify-between px-2.5 py-2 bg-red-50 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setReversalSelected(
+                    reversalSelected.length === lines.length ? [] : lines.map(l => l.payment_id)
+                  )}
+                  className="text-red-500 hover:text-red-700 font-medium"
+                >
+                  {reversalSelected.length === lines.length ? 'Clear all' : 'Select all'}
+                </button>
+                <span className="font-bold text-red-600">
+                  Reversing {fmt(lines.filter(l => reversalSelected.includes(l.payment_id)).reduce((s, l) => s + Number(l.amount), 0))}
+                </span>
+              </div>
             </div>
-          )}
+          </div>
 
           <div>
             <label className="label text-red-700">Reason *</label>
@@ -725,21 +742,19 @@ export default function FeeCollectPage() {
   }
 
   async function handlePinVerify() {
-    // Verify admin PIN against school record
+    // Verify the admin override PIN server-side. The stored secret never leaves
+    // the database - the RPC returns only true/false.
     const supabase = createClient()
-    const { data } = await supabase
-      .from('schools')
-      .select('admin_override_pin')
-      .eq('id', school.id)
-      .single()
-    const stored = (data as any)?.admin_override_pin
-    if (!stored) { setPinError('No admin PIN set. Ask admin to set one.'); return }
-    if (pinInput.trim() === stored) {
+    const { data, error } = await supabase.rpc('verify_admin_override_pin', {
+      p_pin: pinInput.trim(),
+    })
+    if (error) { setPinError('Could not verify PIN. Try again.'); return }
+    if (data === true) {
       setPinUnlocked(true)
       setShowPinField(false)
       setPinError('')
     } else {
-      setPinError('Incorrect PIN')
+      setPinError('Incorrect PIN, or no PIN set. Ask your admin to set one in Settings.')
     }
   }
 

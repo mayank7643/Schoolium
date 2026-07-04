@@ -36,12 +36,12 @@ interface StudentData {
 
 interface FeeRecord {
   id: string
-  fee_type: string
-  amount: number
-  status: string
-  paid_date: string | null
+  label: string
+  total_due: number
+  amount_paid: number
+  balance: number
+  status: string          // unpaid | partial | paid | waived
   due_date: string | null
-  receipt_number: string | null
 }
 
 interface AttendanceRecord {
@@ -315,7 +315,7 @@ export default function StudentDetailPage() {
     const supabase = createClient()
     const [studentRes, feesRes, classesRes, profileRes, attendanceRes, structuresRes] = await Promise.all([
       supabase.from('students').select('*, classes(id, name, section)').eq('id', studentId).single(),
-      supabase.from('fees').select('*').eq('student_id', studentId).order('created_at', { ascending: false }),
+      supabase.from('fee_dues').select('id, label, total_due, amount_paid, balance, status, due_date').eq('student_id', studentId).order('due_date', { ascending: false }),
       supabase.from('classes').select('id, name, section').order('name'),
       supabase.from('profiles').select('school_id, schools(name)').single(),
       // Last 90 days of attendance — enough for monthly view + history
@@ -465,8 +465,8 @@ export default function StudentDetailPage() {
 
   if (!student) return <div className="text-center py-16 text-slate-500">Student not found.</div>
 
-  const totalPaid    = fees.filter(f => f.status === 'paid').reduce((s, f) => s + Number(f.amount), 0)
-  const totalPending = fees.filter(f => f.status === 'pending' || f.status === 'overdue').reduce((s, f) => s + Number(f.amount), 0)
+  const totalPaid    = fees.reduce((s, f) => s + Number(f.amount_paid || 0), 0)
+  const totalPending = fees.filter(f => f.status === 'unpaid' || f.status === 'partial').reduce((s, f) => s + Number(f.balance || 0), 0)
 
   const aadhaarDisplay = form.aadhaar_number
     ? (showAadhaar ? form.aadhaar_number : (() => {
@@ -783,27 +783,28 @@ export default function StudentDetailPage() {
             </div>
             {fees.length > 0 ? (
               <div className="flex flex-col gap-2">
-                {fees.map((fee) => (
+                {fees.map((fee) => {
+                  const overdue = fee.status !== 'paid' && fee.status !== 'waived' && !!fee.due_date && new Date(fee.due_date) < new Date()
+                  return (
                   <div key={fee.id} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0">
                     <div>
-                      <p className="text-sm font-medium text-slate-800 capitalize">{fee.fee_type}</p>
+                      <p className="text-sm font-medium text-slate-800">{fee.label}</p>
                       <p className="text-xs text-slate-400">
-                        {fee.paid_date
-                          ? `Paid ${new Date(fee.paid_date).toLocaleDateString('en-IN')}`
-                          : fee.due_date ? `Due ${new Date(fee.due_date).toLocaleDateString('en-IN')}` : 'No date'}
+                        {fee.due_date ? `Due ${new Date(fee.due_date).toLocaleDateString('en-IN')}` : 'No date'}
+                        {fee.status === 'partial' ? ` · ₹${Number(fee.balance).toLocaleString('en-IN')} left` : ''}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="font-semibold text-slate-900">₹{Number(fee.amount).toLocaleString('en-IN')}</span>
-                      <span className={fee.status === 'paid' ? 'badge-green' : fee.status === 'overdue' ? 'badge-red' : 'badge-yellow'}>
-                        {fee.status}
+                      <span className="font-semibold text-slate-900">₹{Number(fee.total_due).toLocaleString('en-IN')}</span>
+                      <span className={fee.status === 'paid' ? 'badge-green' : overdue ? 'badge-red' : 'badge-yellow'}>
+                        {overdue ? 'overdue' : fee.status}
                       </span>
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             ) : (
-              <p className="text-sm text-slate-400 text-center py-4">No fee records yet</p>
+              <p className="text-sm text-slate-400 text-center py-4">No dues yet</p>
             )}
           </div>
 

@@ -29,6 +29,7 @@ export interface ReceiptInput {
   grandBalance: number
   generatedAt: string      // ISO timestamp
   paidDate?: string        // accepted but unused (kept for call compatibility)
+  receiptNumber?: string   // shown on the single-page PDF (WhatsApp); print HTML ignores it
 }
 
 // Short, privacy-friendly address: first 1-2 comma segments, length-capped.

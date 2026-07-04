@@ -36,11 +36,18 @@ export interface School {
   plan: Plan | null
   is_active: boolean
   created_at: string
-  // WhatsApp — controls ALL WA features including fee reminders
-  wa_alerts_enabled: boolean
+  // WhatsApp feature gates (each independent)
+  wa_alerts_enabled: boolean               // attendance entry/exit/absence alerts
+  wa_fee_reminders_enabled: boolean         // fee due + overdue reminders
+  wa_payment_confirmation_enabled: boolean  // on-payment WhatsApp + PDF receipt
+  fee_reminder_days_before: number          // days before due_date to remind (default 3)
   wa_monthly_quota: number
   wa_messages_sent_month: number
   wa_quota_reset_date: string | null
+  // Late-fee waiver caps
+  late_fee_waiver_max_pct: number
+  late_fee_waiver_max_flat: number
+  admin_override_pin: string | null
 }
 
 export interface Profile {

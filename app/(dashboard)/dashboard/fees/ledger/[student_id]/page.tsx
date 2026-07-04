@@ -60,8 +60,8 @@ interface LedgerPayment {
 
 interface ManualFee {
   id: string
-  description: string   // fee_dues.description (was fee_type on the old fees table)
-  amount: number        // fee_dues.amount (total due amount)
+  description: string   // sourced from fee_dues.label
+  amount: number        // sourced from fee_dues.total_due
   amount_paid: number   // fee_dues.amount_paid
   balance: number       // fee_dues.balance (GENERATED ALWAYS)
   due_date: string | null
@@ -323,8 +323,8 @@ export default function StudentFeeLedgerPage() {
         .from('fee_dues')
         .select(`
           id,
-          description,
-          amount,
+          label,
+          total_due,
           amount_paid,
           balance,
           due_date,
@@ -372,8 +372,8 @@ export default function StudentFeeLedgerPage() {
                         : 'unpaid'
       return {
         id:                  d.id,
-        description:         d.description ?? '—',
-        amount:              Number(d.amount),
+        description:         d.label ?? '—',
+        amount:              Number(d.total_due),
         amount_paid:         Number(d.amount_paid),
         balance,
         due_date:            d.due_date ?? null,

@@ -9,7 +9,7 @@ import { createClient } from '@/utils/supabase/client'
 import {
   IndianRupee, Settings2, HandCoins, AlertTriangle,
   Zap, X, CheckCircle2, AlertCircle, RotateCcw,
-  ClipboardCheck, TrendingUp, Clock, Printer, Eye, ChevronDown,
+  ClipboardCheck, TrendingUp, Clock, Printer, Eye, ChevronDown, FileBarChart,
 } from 'lucide-react'
 import { buildReceiptHTML } from '@/app/lib/receipt'
 
@@ -94,11 +94,12 @@ export default function FeesPage() {
   const [genError,         setGenError]         = useState('')
 
   // Inline reversal request on each payment row
-  const [reversalPaymentId, setReversalPaymentId] = useState<string | null>(null)
+  const [reversalOpenKey,   setReversalOpenKey]   = useState<string | null>(null)
+  const [reversalSelected,  setReversalSelected]  = useState<string[]>([])
   const [reversalReason,    setReversalReason]    = useState('')
   const [reversalSaving,    setReversalSaving]    = useState(false)
   const [reversalError,     setReversalError]     = useState('')
-  const [reversalDoneIds,   setReversalDoneIds]   = useState<string[]>([])
+  const [reversalDoneKeys,  setReversalDoneKeys]  = useState<string[]>([])
   const [schoolId,          setSchoolId]          = useState<string | null>(null)
   const [hasMore,           setHasMore]           = useState(false)
   const [loadingMore,       setLoadingMore]       = useState(false)
@@ -121,7 +122,7 @@ export default function FeesPage() {
       admin
         ? supabase
             .from('reversal_requests')
-            .select('id, reason, requested_at, fee_payments(amount_paid, receipt_number, students(full_name))')
+            .select('id, reason, requested_at, fee_payments!fee_payment_id(amount_paid, receipt_number, students(full_name))')
             .eq('school_id', sid)
             .eq('status', 'pending')
             .order('requested_at', { ascending: false })
@@ -178,18 +179,20 @@ export default function FeesPage() {
     finally  { setGenerating(false) }
   }
 
-  async function handleRequestReversal(paymentId: string) {
+  async function handleRequestReversal(rowKey: string, selectedIds: string[]) {
+    if (selectedIds.length === 0) { setReversalError('Select at least one item to reverse'); return }
     if (!reversalReason.trim()) { setReversalError('Reason is required'); return }
     setReversalSaving(true); setReversalError('')
     const supabase = createClient()
-    const { error } = await supabase.rpc('request_payment_reversal', {
-      p_fee_payment_id: paymentId,
-      p_reason:         reversalReason.trim(),
+    const { error } = await supabase.rpc('request_payment_reversals', {
+      p_fee_payment_ids: selectedIds,
+      p_reason:          reversalReason.trim(),
     })
     if (error) { setReversalError(error.message); setReversalSaving(false); return }
-    setReversalDoneIds(prev => [...prev, paymentId])
-    setReversalPaymentId(null)
+    setReversalDoneKeys(prev => [...prev, rowKey])
+    setReversalOpenKey(null)
     setReversalReason('')
+    setReversalSelected([])
     setReversalSaving(false)
     fetchData()
   }
@@ -374,6 +377,9 @@ export default function FeesPage() {
         <Link href="/dashboard/fees/defaulters" className="btn-secondary flex items-center gap-1.5 text-sm">
           <AlertTriangle size={14} /> Defaulters
         </Link>
+        <Link href="/dashboard/fees/summary" className="btn-secondary flex items-center gap-1.5 text-sm">
+          <FileBarChart size={14} /> Summary
+        </Link>
         {isAdmin && (
           <Link href="/dashboard/fees/reversals" className="btn-secondary flex items-center gap-1.5 text-sm">
             <RotateCcw size={14} /> Reversals
@@ -450,11 +456,11 @@ export default function FeesPage() {
             {groupedPayments.map(g => {
               const isReversed = g.any_reversed
               const isPending  = g.any_pending
-              // For reversal: use first non-reversed payment_id in the group
-              const reversalTargetId = g.lines.find(l => !l.reversal_status)?.id ?? g.lines[0]?.id
-              const isDone     = reversalDoneIds.includes(reversalTargetId ?? '')
-              const isOpen     = reversalPaymentId === reversalTargetId
               const rowKey     = g.receipt_number ?? g.lines[0]?.id ?? ''
+              // Lines still eligible to reverse (not already reversed / pending)
+              const reversibleLines = g.lines.filter(l => !l.reversal_status || l.reversal_status === 'reversal_rejected')
+              const isDone     = reversalDoneKeys.includes(rowKey)
+              const isOpen     = reversalOpenKey === rowKey
               const isExpanded = expandedReceipt === rowKey
               return (
                 <div key={g.receipt_number ?? g.lines[0]?.id} className="px-5 py-3">
@@ -527,15 +533,51 @@ export default function FeesPage() {
                       <div className="flex items-center justify-between">
                         <p className="text-xs font-semibold text-red-700">Request reversal</p>
                         <button
-                          onClick={() => { setReversalPaymentId(null); setReversalReason(''); setReversalError('') }}
+                          onClick={() => { setReversalOpenKey(null); setReversalReason(''); setReversalSelected([]); setReversalError('') }}
                           className="text-red-300 hover:text-red-500"
                         >
                           <X size={13} />
                         </button>
                       </div>
                       <p className="text-[10px] text-red-600 bg-red-100 px-2 py-1 rounded">
-                        Not reversed until admin approves. Original receipt always preserved.
+                        Tick the items to reverse (all ticked = full reversal). Not reversed until admin approves.
                       </p>
+
+                      {/* Line selection */}
+                      <div className="rounded-lg border border-red-100 bg-white divide-y divide-red-50">
+                        {reversibleLines.map(l => {
+                          const checked = reversalSelected.includes(l.id)
+                          return (
+                            <label key={l.id} className="flex items-center gap-2 px-2.5 py-2 cursor-pointer text-xs">
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={() => setReversalSelected(prev =>
+                                  prev.includes(l.id) ? prev.filter(x => x !== l.id) : [...prev, l.id]
+                                )}
+                                className="accent-red-500"
+                              />
+                              <span className="flex-1 truncate text-slate-700">{(l.fee_dues as any)?.label ?? 'Fee payment'}</span>
+                              <span className="font-medium text-slate-800 shrink-0">{fmt(l.amount_paid)}</span>
+                            </label>
+                          )
+                        })}
+                        <div className="flex items-center justify-between px-2.5 py-2 bg-red-50 text-xs">
+                          <button
+                            type="button"
+                            onClick={() => setReversalSelected(
+                              reversalSelected.length === reversibleLines.length ? [] : reversibleLines.map(l => l.id)
+                            )}
+                            className="text-red-500 hover:text-red-700 font-medium"
+                          >
+                            {reversalSelected.length === reversibleLines.length ? 'Clear all' : 'Select all'}
+                          </button>
+                          <span className="font-bold text-red-600">
+                            Reversing {fmt(reversibleLines.filter(l => reversalSelected.includes(l.id)).reduce((s, l) => s + Number(l.amount_paid), 0))}
+                          </span>
+                        </div>
+                      </div>
+
                       <textarea
                         className="input resize-none text-sm"
                         rows={2}
@@ -549,7 +591,7 @@ export default function FeesPage() {
                         </p>
                       )}
                       <button
-                        onClick={() => handleRequestReversal(reversalTargetId ?? '')}
+                        onClick={() => handleRequestReversal(rowKey, reversalSelected)}
                         disabled={reversalSaving}
                         className="w-full py-1.5 text-xs font-semibold bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50"
                       >
@@ -564,7 +606,7 @@ export default function FeesPage() {
                   )}
                   {!isReversed && !isPending && !isDone && !isOpen && (
                     <button
-                      onClick={() => { setReversalPaymentId(reversalTargetId ?? null); setReversalReason(''); setReversalError('') }}
+                      onClick={() => { setReversalOpenKey(rowKey); setReversalSelected(reversibleLines.map(l => l.id)); setReversalReason(''); setReversalError('') }}
                       className="mt-1 text-[11px] text-red-400 hover:text-red-600 transition-colors"
                     >
                       Made a mistake? Request reversal →

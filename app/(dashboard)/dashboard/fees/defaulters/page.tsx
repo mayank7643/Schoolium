@@ -7,7 +7,7 @@
 // Actions: collect fee, view ledger, send WA reminder.
 //
 // Data source: get_defaulters() SECURITY DEFINER RPC
-// WA reminders: send-fee-reminder Edge Function
+// WA reminders: routed through /api/wa/reminder -> outbox worker
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
@@ -64,7 +64,6 @@ const ACADEMIC_YEARS = [
 export default function DefaultersPage() {
   const [defaulters, setDefaulters]     = useState<DefaulterRow[]>([])
   const [classes, setClasses]           = useState<ClassOption[]>([])
-  const [schoolId, setSchoolId]         = useState('')
   const [waEnabled, setWaEnabled]       = useState(false)
   const [loading, setLoading]           = useState(true)
   const [error, setError]               = useState('')
@@ -96,7 +95,7 @@ export default function DefaultersPage() {
 
     const { data: profileData } = await supabase
       .from('profiles')
-      .select('school_id, schools(id, name, wa_alerts_enabled)')
+      .select('school_id, schools(id, name, wa_fee_reminders_enabled)')
       .single()
 
     if (!profileData) { setError('Could not load school info'); setLoading(false); return }
@@ -104,8 +103,7 @@ export default function DefaultersPage() {
     const p   = profileData as any
     const sid = p.school_id
     const school = Array.isArray(p.schools) ? p.schools[0] : p.schools
-    setSchoolId(sid)
-    setWaEnabled(school?.wa_alerts_enabled ?? false)
+    setWaEnabled(school?.wa_fee_reminders_enabled ?? false)
 
     const [defaultersRes, classesRes] = await Promise.all([
       supabase.rpc('get_defaulters', {
@@ -180,7 +178,7 @@ export default function DefaultersPage() {
   async function sendReminders(studentIds: string[]) {
     if (!studentIds.length) return
     if (!waEnabled) {
-      setReminderMsg('WhatsApp alerts are not enabled for your school. Enable it in your school settings.')
+      setReminderMsg('Fee reminders are turned off. A school admin can enable them in Settings.')
       return
     }
 
@@ -188,43 +186,40 @@ export default function DefaultersPage() {
     setReminderMsg('')
 
     try {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/send-fee-reminder`,
-        {
-          method:  'POST',
-          headers: {
-            'Content-Type':  'application/json',
-            'Authorization': `Bearer ${session?.access_token}`,
-          },
-          body: JSON.stringify({
-            school_id:     schoolId,
-            student_ids:   studentIds,
-            reminder_type: reminderType,
-          }),
-        }
-      )
+      const res = await fetch('/api/wa/reminder', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          student_ids:   studentIds,
+          reminder_type: reminderType,
+        }),
+      })
 
       const json = await res.json()
 
       if (!res.ok) {
-        setReminderMsg(`Error: ${json.error ?? 'Failed to send reminders'}`)
+        const reason =
+          json.error === 'feature_off' ? 'Fee reminders are turned off. Enable them in Settings.'
+          : json.error === 'forbidden' ? 'Only a school admin can send reminders.'
+          : `Error: ${json.error ?? 'Failed to send reminders'}`
+        setReminderMsg(reason)
+      } else if ((json.enqueued ?? 0) === 0) {
+        setReminder({ sending: false, sent: [], failed: [], skipped: [] })
+        setReminderMsg('No new reminders sent (already reminded today, or no pending dues / no parent phone).')
       } else {
-        const { summary, results } = json
+        const w = json.worker || {}
+        const sentN = w.sent ?? 0, skipN = w.skipped ?? 0, failN = w.failed ?? 0
+        const cleanSuccess = failN === 0 && skipN === 0
         setReminder({
           sending: false,
-          sent:    results.filter((r: any) => r.success).map((r: any) => r.student_id),
-          failed:  results.filter((r: any) => !r.success && !r.skipped).map((r: any) => r.student_id),
-          skipped: results.filter((r: any) => r.skipped).map((r: any) => r.student_id),
+          sent:    cleanSuccess ? studentIds : [],
+          failed:  [],
+          skipped: [],
         })
-        setReminderMsg(
-          `Sent: ${summary.sent} · Skipped: ${summary.skipped} · Failed: ${summary.failed}`
-        )
+        setReminderMsg(`Sent: ${sentN} - Skipped: ${skipN} - Failed: ${failN}`)
       }
     } catch {
-      setReminderMsg('Network error — try again')
+      setReminderMsg('Network error - try again')
     } finally {
       setReminder(r => ({ ...r, sending: false }))
     }
@@ -613,7 +608,7 @@ export default function DefaultersPage() {
         <div className="mt-4 flex items-start gap-3 bg-amber-50 border border-amber-100 rounded-xl px-4 py-3">
           <AlertCircle size={16} className="text-amber-500 shrink-0 mt-0.5" />
           <p className="text-sm text-amber-700">
-            WhatsApp reminders are not enabled for your school. Contact Schoolium support to activate this feature.
+            Fee reminders are turned off. A school admin can enable them in Settings.
           </p>
         </div>
       )}

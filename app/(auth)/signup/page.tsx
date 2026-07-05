@@ -4,8 +4,9 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
+import { useCooldown } from '@/utils/useCooldown'
 
-type Step = 'form' | 'success'
+type Step = 'form' | 'otp' | 'success'
 
 function validateSignupForm(form: {
   fullName: string
@@ -29,6 +30,7 @@ export default function SignupPage() {
   const [step, setStep] = useState<Step>('form')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [otp, setOtp] = useState('')
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
   const [form, setForm] = useState({
     fullName: '',
@@ -37,6 +39,7 @@ export default function SignupPage() {
     phone: '',
     password: '',
   })
+  const cooldown = useCooldown(45)
 
   function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
     const { name, value } = e.target
@@ -99,6 +102,23 @@ export default function SignupPage() {
       return
     }
 
+    // If email confirmation is OFF, signUp returns a session and the
+    // user is already in - finish immediately. If it's ON, there is no
+    // session yet: send them to the OTP step to verify the emailed code.
+    if (authData.session) {
+      await finishSchoolSetup()
+    } else {
+      cooldown.start()
+      setStep('otp')
+      setLoading(false)
+    }
+  }
+
+  // Creates the school + links the profile. Requires an authenticated
+  // session (create_school_for_user uses auth.uid()), so this only runs
+  // after signUp auto-confirmed OR the signup OTP was verified.
+  async function finishSchoolSetup() {
+    const supabase = createClient()
     const { error: fnError } = await supabase.rpc('create_school_for_user', {
       school_name: form.schoolName,
       school_email: form.email,
@@ -118,6 +138,40 @@ export default function SignupPage() {
     }, 2000)
   }
 
+  async function handleVerifyOtp(e: React.FormEvent) {
+    e.preventDefault()
+    setError('')
+    if (!/^\d{6}$/.test(otp.trim())) {
+      setError('Enter the 6-digit code from your email.')
+      return
+    }
+
+    setLoading(true)
+    const supabase = createClient()
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: form.email, token: otp.trim(), type: 'signup',
+    })
+    if (verifyError) {
+      setError('That code is invalid or has expired. Request a new one.')
+      setLoading(false)
+      return
+    }
+    await finishSchoolSetup()
+  }
+
+  async function resendSignupCode() {
+    setError('')
+    const supabase = createClient()
+    const { error: resendError } = await supabase.auth.resend({
+      type: 'signup', email: form.email,
+    })
+    if (resendError) {
+      setError(resendError.message)
+      return
+    }
+    cooldown.start()
+  }
+
   if (step === 'success') {
     return (
       <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
@@ -129,6 +183,62 @@ export default function SignupPage() {
           </div>
           <h2 className="text-xl font-semibold text-slate-900 mb-2">Account created!</h2>
           <p className="text-slate-500 text-sm">Taking you to your dashboard...</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (step === 'otp') {
+    return (
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm">
+          <div className="flex items-center justify-center gap-2 mb-8">
+            <div className="w-9 h-9 bg-brand-600 rounded-lg flex items-center justify-center">
+              <span className="text-white font-bold">S</span>
+            </div>
+            <span className="font-semibold text-slate-900 text-xl">Schoolium</span>
+          </div>
+
+          <div className="card">
+            <h1 className="text-xl font-semibold text-slate-900 mb-1">Verify your email</h1>
+            <p className="text-sm text-slate-500 mb-6">
+              We sent a 6-digit code to <span className="font-medium">{form.email}</span>.
+              Enter it to finish creating your account.
+            </p>
+
+            <form onSubmit={handleVerifyOtp} className="flex flex-col gap-4">
+              <div>
+                <label className="label">6-digit code</label>
+                <input inputMode="numeric" autoComplete="one-time-code"
+                  className="input tracking-[0.4em] text-center font-mono"
+                  placeholder="000000" maxLength={6}
+                  value={otp}
+                  onChange={e => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))} />
+              </div>
+
+              {error && (
+                <div className="bg-red-50 text-red-600 text-sm px-3 py-2 rounded-lg">{error}</div>
+              )}
+
+              <button type="submit" className="btn-primary w-full py-2.5 mt-1" disabled={loading}>
+                {loading ? 'Verifying...' : 'Verify & create account'}
+              </button>
+            </form>
+
+            <div className="flex items-center justify-between mt-4 text-sm">
+              <button type="button"
+                onClick={resendSignupCode}
+                disabled={cooldown.active}
+                className="text-brand-600 font-medium hover:underline disabled:text-slate-400 disabled:no-underline">
+                {cooldown.active ? `Resend in ${cooldown.remaining}s` : 'Resend code'}
+              </button>
+              <button type="button"
+                onClick={() => { setStep('form'); setOtp(''); setError('') }}
+                className="text-slate-500 hover:underline">
+                Change details
+              </button>
+            </div>
+          </div>
         </div>
       </main>
     )

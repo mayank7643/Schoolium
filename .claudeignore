@@ -1,0 +1,24 @@
+# --- Exclude the junk development SQL folder ---
+SQL/
+
+# --- Standard exclusions for your project structure ---
+node_modules/
+.git/
+.next/
+dist/
+build/
+out/
+.vercel/
+
+# --- Environment and sensitive files ---
+.env
+.env.local
+.env.development
+.env.production
+.env.example
+
+# --- System and temporary files ---
+*.log
+.DS_Store
+*.tmp
+

@@ -6,6 +6,8 @@ import {
   CalendarCheck, Wallet,
 } from 'lucide-react'
 import Link from 'next/link'
+import TeacherDashboard from './TeacherDashboard'
+import PrincipalDashboard from './PrincipalDashboard'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtINR(n: number) {
@@ -27,13 +29,24 @@ export default async function DashboardPage() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('school_id, schools(name)')
+    .select('role, school_id, schools(name)')
     .eq('id', user.id)
     .single()
 
   const schoolId   = profile?.school_id
   const schoolName = (profile?.schools as any)?.name ?? 'Your school'
   if (!schoolId) redirect('/login')
+
+  // ── chat17 Module 7: role-specific dashboards ─────────────────────────────
+  // Principal gets the staff/academic overview; teacher and other staff
+  // roles get their personal workspace. The admin flow below is untouched.
+  const role = (profile as any)?.role as string | undefined
+  if (role === 'principal') {
+    return <PrincipalDashboard schoolName={schoolName} />
+  }
+  if (role === 'teacher' || role === 'staff' || role === 'collector' || role === 'receptionist') {
+    return <TeacherDashboard userId={user.id} schoolName={schoolName} />
+  }
 
   const now       = new Date()
   const thisYear  = now.getFullYear()

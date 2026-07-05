@@ -32,9 +32,15 @@ interface ScanQueueItem {
 }
 
 interface ScanResult {
-  type: 'success' | 'already' | 'unknown'
+  type: 'success' | 'already' | 'unknown' | 'staff' | 'staff_blocked'
   student?: CachedStudent
   entry_type?: 'entry' | 'exit'  // shown in overlay
+  // staff scan fields (chat17 Module 3)
+  staffName?: string
+  staffAction?: 'checked_in' | 'checked_out' | 'duplicate'
+  staffStatus?: string
+  staffTime?: string
+  staffMessage?: string
 }
 
 type CameraState = 'idle' | 'requesting' | 'denied' | 'error' | 'running'
@@ -345,7 +351,66 @@ export default function ScanPage() {
     if (isScanningRef.current) return
     isScanningRef.current = true
 
-    const uuid    = decodedText.trim()
+    const raw = decodedText.trim()
+
+    // ── Staff ID card (chat17): payload is "STAFF:<uuid>" ─────
+    // Staff attendance is decided server-side (late cutoff, leave
+    // check, check-in vs check-out), so it needs the network.
+    if (raw.toUpperCase().startsWith('STAFF:')) {
+      const staffId = raw.slice(6).trim()
+
+      if (!navigator.onLine) {
+        playBeep('unknown')
+        setScanResult({
+          type: 'staff_blocked',
+          staffMessage: 'Staff scans need internet - try again when online',
+        })
+      } else {
+        const supabase = createClient()
+        const { data, error } = await supabase.rpc('record_staff_scan', {
+          p_staff_id: staffId,
+        })
+
+        const res = data as {
+          ok: boolean
+          action?: 'checked_in' | 'checked_out' | 'duplicate'
+          status?: string
+          staff_name?: string
+          time?: string
+          message?: string
+        } | null
+
+        if (error || !res) {
+          playBeep('unknown')
+          setScanResult({
+            type: 'staff_blocked',
+            staffMessage: error?.message ?? 'Staff scan failed - try again',
+          })
+        } else if (!res.ok) {
+          playBeep('unknown')
+          setScanResult({ type: 'staff_blocked', staffMessage: res.message ?? 'Scan rejected' })
+        } else {
+          playBeep(res.action === 'duplicate' ? 'already' : 'success')
+          if (res.action === 'checked_in') setScanCount(c => c + 1)
+          setScanResult({
+            type: 'staff',
+            staffName: res.staff_name,
+            staffAction: res.action,
+            staffStatus: res.status,
+            staffTime: res.time,
+          })
+        }
+      }
+
+      if (overlayTimerRef.current) clearTimeout(overlayTimerRef.current)
+      overlayTimerRef.current = setTimeout(() => {
+        setScanResult(null)
+        isScanningRef.current = false
+      }, 1800)
+      return
+    }
+
+    const uuid    = raw
     const student = await lookupByUUID(uuid)
 
     // Read from ref — not state — so this callback never needs to be recreated
@@ -597,16 +662,31 @@ export default function ScanPage() {
   // ── Overlay content ─────────────────────────────────────────
   const entryLabel = scanResult?.entry_type === 'exit' ? 'Exit' : 'Entry'
 
+  const staffActionLabel =
+    scanResult?.staffAction === 'checked_out' ? 'Checked out' :
+    scanResult?.staffAction === 'duplicate'   ? 'Already checked in' :
+    scanResult?.staffStatus === 'late'        ? 'Checked in - Late' : 'Checked in'
+
   const overlayBg =
+    scanResult?.type === 'staff' ? (
+      scanResult.staffAction === 'checked_out' ? 'bg-blue-500' :
+      scanResult.staffAction === 'duplicate' || scanResult.staffStatus === 'late' ? 'bg-amber-400' :
+      'bg-green-500'
+    ) :
+    scanResult?.type === 'staff_blocked' ? 'bg-red-500' :
     scanResult?.type === 'success' ? (scanResult.entry_type === 'exit' ? 'bg-blue-500' : 'bg-green-500') :
     scanResult?.type === 'already' ? 'bg-amber-400' : 'bg-red-500'
 
   const overlayText =
+    scanResult?.type === 'staff' ? scanResult.staffName ?? 'Staff' :
+    scanResult?.type === 'staff_blocked' ? 'Staff scan' :
     scanResult?.type === 'success' ? scanResult.student?.full_name ?? 'Present' :
     scanResult?.type === 'already' ? `Already ${entryLabel.toLowerCase()}ed — ${scanResult.student?.full_name}` :
     'Unknown card'
 
   const overlaySubtext =
+    scanResult?.type === 'staff' ? `Staff · ${staffActionLabel}${scanResult.staffTime ? ` · ${scanResult.staffTime}` : ''}` :
+    scanResult?.type === 'staff_blocked' ? (scanResult.staffMessage ?? 'Scan rejected') :
     scanResult?.type === 'success' ? `${entryLabel} · ${scanResult.student?.class_name || scanResult.student?.student_uid || ''}` :
     scanResult?.type === 'already' ? `${entryLabel} already recorded today` :
     'QR not recognised'
@@ -750,6 +830,12 @@ export default function ScanPage() {
             {scanResult?.type === 'success' && <CheckCircle size={72} className="text-white" />}
             {scanResult?.type === 'already'  && <Clock       size={72} className="text-white" />}
             {scanResult?.type === 'unknown'  && <AlertCircle size={72} className="text-white" />}
+            {scanResult?.type === 'staff' && (
+              scanResult.staffAction === 'checked_out'
+                ? <LogOutIcon size={72} className="text-white" />
+                : <CheckCircle size={72} className="text-white" />
+            )}
+            {scanResult?.type === 'staff_blocked' && <AlertCircle size={72} className="text-white" />}
             <p className="text-white text-3xl font-bold leading-tight">{overlayText}</p>
             <p className="text-white/80 text-lg">{overlaySubtext}</p>
           </div>

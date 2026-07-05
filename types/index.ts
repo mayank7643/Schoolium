@@ -4,7 +4,7 @@
 // ============================================
 
 export type Plan           = 'basic' | 'standard' | 'premium'
-export type Role           = 'super_admin' | 'school_admin' | 'teacher' | 'guard' | 'parent'
+export type Role           = 'super_admin' | 'school_admin' | 'principal' | 'teacher' | 'collector' | 'receptionist' | 'staff' | 'guard' | 'parent'
 export type Gender         = 'male' | 'female' | 'other'
 export type EntryType      = 'entry' | 'exit'
 
@@ -373,4 +373,221 @@ export interface AttendanceSummary {
   total_present: number
   total_students: number
   attendance_rate: number
+}
+
+
+// ============================================
+// STAFF MANAGEMENT MODULE (chat17)
+// ============================================
+
+export type EmploymentStatus   = 'active' | 'probation' | 'on_leave' | 'resigned' | 'terminated' | 'retired'
+export type BloodGroup         = 'A+' | 'A-' | 'B+' | 'B-' | 'AB+' | 'AB-' | 'O+' | 'O-'
+export type StaffAttStatus     = 'present' | 'absent' | 'late' | 'half_day' | 'leave'
+export type StaffAttSource     = 'manual' | 'qr' | 'leave_sync' | 'biometric'
+export type LeaveType          = 'casual' | 'sick' | 'earned' | 'unpaid' | 'other'
+export type LeaveStatus        = 'pending' | 'approved' | 'rejected' | 'cancelled'
+export type StaffDocType       = 'aadhaar' | 'pan' | 'resume' | 'qualification' | 'appointment_letter' | 'other'
+
+export interface Staff {
+  id: string
+  school_id: string
+  profile_id: string
+  employee_id: string
+  full_name: string
+  father_name: string | null
+  mobile: string
+  email: string
+  address: string | null
+  date_of_birth: string | null
+  gender: Gender | null
+  blood_group: BloodGroup | null
+  qualification: string | null
+  experience_years: number
+  joining_date: string
+  employment_status: EmploymentStatus
+  department: string
+  designation: string
+  is_teaching: boolean
+  photo_url: string | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface Subject {
+  id: string
+  school_id: string
+  name: string
+  code: string | null
+  is_active: boolean
+  created_at: string
+}
+
+export interface ClassTeacher {
+  id: string
+  school_id: string
+  class_id: string
+  staff_id: string
+  created_by: string | null
+  created_at: string
+  // joined
+  classes?: Class
+  staff?: Staff
+}
+
+export interface SubjectAssignment {
+  id: string
+  school_id: string
+  staff_id: string
+  subject_id: string
+  class_id: string
+  created_by: string | null
+  created_at: string
+  // joined
+  subjects?: Subject
+  classes?: Class
+  staff?: Staff
+}
+
+export interface StaffAttendance {
+  id: string
+  school_id: string
+  staff_id: string
+  attendance_date: string
+  status: StaffAttStatus
+  check_in_time: string | null
+  check_out_time: string | null
+  source: StaffAttSource
+  remarks: string | null
+  marked_by: string | null
+  created_at: string
+  updated_at: string
+  // joined
+  staff?: Staff
+}
+
+export interface LeaveRequest {
+  id: string
+  school_id: string
+  staff_id: string
+  leave_type: LeaveType
+  from_date: string
+  to_date: string
+  total_days: number
+  reason: string
+  document_path: string | null
+  status: LeaveStatus
+  admin_comment: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+  created_at: string
+  updated_at: string
+  // joined
+  staff?: Staff
+}
+
+export interface StaffDocument {
+  id: string
+  school_id: string
+  staff_id: string
+  doc_type: StaffDocType
+  title: string
+  file_path: string
+  file_size: number | null
+  uploaded_by: string | null
+  created_at: string
+}
+
+export interface RolePermission {
+  id: string
+  school_id: string | null
+  role: string
+  permission_key: string
+  allowed: boolean
+  created_at: string
+}
+
+// get_staff_directory_basic() row - safe columns only
+export interface StaffDirectoryEntry {
+  id: string
+  employee_id: string
+  full_name: string
+  designation: string
+  department: string
+  is_teaching: boolean
+  photo_url: string | null
+}
+
+// get_teacher_assignments() shape
+export interface TeacherAssignments {
+  class_teacher_of: { class_id: string; name: string; section: string | null }[]
+  subjects: {
+    assignment_id: string
+    subject_id: string
+    subject: string
+    class_id: string
+    class_name: string
+    section: string | null
+  }[]
+}
+
+// get_staff_attendance_summary() row
+export interface StaffAttendanceSummaryRow {
+  staff_id: string
+  employee_id: string
+  full_name: string
+  department: string
+  designation: string
+  present_days: number
+  late_days: number
+  half_days: number
+  absent_days: number
+  leave_days: number
+  working_days: number
+  percentage: number
+}
+
+// get_staff_dashboard_stats() shape
+export interface StaffDashboardStats {
+  total_staff: number
+  teaching_staff: number
+  non_teaching_staff: number
+  today: {
+    present: number
+    late: number
+    half_day: number
+    absent: number
+    on_leave: number
+    unmarked: number
+  }
+  pending_leave_requests: number
+}
+
+// ============================================
+// TEACHER WORKSPACE (chat18)
+// ============================================
+
+export type ClassAttStatus = 'present' | 'absent' | 'late'
+
+export interface ClassAttendance {
+  id: string
+  school_id: string
+  class_id: string
+  student_id: string
+  attendance_date: string
+  status: ClassAttStatus
+  source: 'teacher' | 'admin'
+  marked_by: string | null
+  created_at: string
+  updated_at: string
+}
+
+// get_class_fee_summary() row - read-only view for class teachers
+export interface ClassFeeSummaryRow {
+  student_id: string
+  full_name: string
+  total_due: number
+  total_paid: number
+  balance: number
+  overdue_count: number
 }

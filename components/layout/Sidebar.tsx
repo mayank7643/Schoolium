@@ -12,6 +12,8 @@ import {
   IndianRupee,
   BookOpen,
   CalendarCheck,
+  Briefcase,
+  ClipboardList,
   LogOut,
   School,
   Settings,
@@ -27,6 +29,25 @@ const navItems = [
   { label: 'Classes',    href: '/dashboard/classes',    icon: BookOpen        },
   { label: 'Attendance', href: '/dashboard/attendance', icon: CalendarCheck   },
 ]
+
+// chat17 Module 7 - which core nav items each role sees. Must stay in
+// sync with the middleware route map (middleware.ts): the sidebar hides
+// what the middleware blocks. Roles not listed (school_admin,
+// super_admin) see everything.
+const ROLE_NAV: Record<string, string[]> = {
+  principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance'],
+  teacher:      ['/dashboard'],
+  collector:    ['/dashboard/fees', '/dashboard/students'],
+  receptionist: ['/dashboard/students', '/dashboard/classes'],
+  staff:        [],
+}
+
+const LEAVE_ROLES = ['principal', 'teacher', 'collector', 'receptionist', 'staff']
+
+function visibleNavFor(role: string | undefined | null) {
+  if (!role || !(role in ROLE_NAV)) return navItems // admin sees everything
+  return navItems.filter(i => ROLE_NAV[role].includes(i.href))
+}
 
 interface SidebarProps {
   profile: {
@@ -108,7 +129,16 @@ export default function Sidebar({ profile }: SidebarProps) {
         </div>
 
         <nav className="flex-1 px-3 py-4 flex flex-col gap-1">
-          {navItems.map(item => <NavLink key={item.href} {...item} />)}
+          {visibleNavFor(profile?.role).map(item => <NavLink key={item.href} {...item} />)}
+          {profile?.role === 'teacher' && (
+            <NavLink href="/dashboard/my-classes" icon={BookOpen} label="My Classes" />
+          )}
+          {LEAVE_ROLES.includes(profile?.role ?? '') && (
+            <NavLink href="/dashboard/leave" icon={ClipboardList} label="My Leave" />
+          )}
+          {(profile?.role === 'school_admin' || profile?.role === 'principal') && (
+            <NavLink href="/dashboard/staff" icon={Briefcase} label="Staff" />
+          )}
           {profile?.role === 'school_admin' && (
             <NavLink href="/dashboard/settings" icon={Settings} label="Settings" />
           )}
@@ -174,9 +204,17 @@ export default function Sidebar({ profile }: SidebarProps) {
         <SidebarContent />
       </aside>
 
-      {/* Mobile bottom nav — 5 items, smaller label */}
+      {/* Mobile bottom nav — role-filtered, smaller label */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white border-t border-slate-100 flex items-center justify-around px-1 h-16 safe-area-pb">
-        {navItems.map(({ href, icon: Icon, label }) => {
+        {[
+          ...visibleNavFor(profile?.role),
+          ...(profile?.role === 'teacher'
+            ? [{ label: 'My Classes', href: '/dashboard/my-classes', icon: BookOpen }]
+            : []),
+          ...(LEAVE_ROLES.includes(profile?.role ?? '')
+            ? [{ label: 'My Leave', href: '/dashboard/leave', icon: ClipboardList }]
+            : []),
+        ].map(({ href, icon: Icon, label }) => {
           const active = isActive(href)
           return (
             <Link

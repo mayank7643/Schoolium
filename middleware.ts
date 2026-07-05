@@ -1,8 +1,51 @@
 // FILE: middleware.ts
-// Updated: guards are redirected to scan page, blocked from dashboard
+// Guards are redirected to the scan page, blocked from dashboard.
+// chat17 Module 7: role-based route gating for staff roles. The
+// sidebar HIDES what this middleware BLOCKS - this is the actual
+// enforcement (typing a URL directly gets redirected too). Data is
+// additionally protected by RLS + RPC role checks; this layer keeps
+// each role inside its own workspace:
+//   school_admin  everything
+//   principal     everything except Settings
+//   teacher       dashboard, students, classes, attendance, my leave
+//   collector     fees, students (needed to collect), my leave
+//   receptionist  students, classes, my leave
+//   staff         my leave only
+//   guard         scan page only (unchanged)
 
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+
+// Where each restricted role lands after login / when blocked
+const ROLE_HOME: Record<string, string> = {
+  teacher: '/dashboard',
+  collector: '/dashboard/fees',
+  receptionist: '/dashboard/students',
+  staff: '/dashboard/leave',
+}
+
+// Allowed /dashboard route prefixes per restricted role. Roles not
+// listed here (school_admin, super_admin, principal) pass through,
+// except principal is blocked from /dashboard/settings below.
+// chat17 Module 7b hotfix: teacher no longer gets /dashboard/classes
+// or /dashboard/attendance - those pages expose admin controls
+// (add class, scanner URL, guard management). The teacher-scoped
+// My Classes + class attendance + read-only class fees arrive with
+// the Teacher Workspace module and will be added back here.
+const ROLE_ALLOW: Record<string, string[]> = {
+  teacher: ['/dashboard/leave', '/dashboard/my-classes'],
+  collector: ['/dashboard/fees', '/dashboard/students', '/dashboard/leave'],
+  receptionist: ['/dashboard/students', '/dashboard/classes', '/dashboard/leave'],
+  staff: ['/dashboard/leave'],
+}
+
+function isAllowedPath(role: string, pathname: string): boolean {
+  const allow = ROLE_ALLOW[role]
+  if (!allow) return true
+  // the bare dashboard home: only roles whose home IS /dashboard
+  if (pathname === '/dashboard') return ROLE_HOME[role] === '/dashboard'
+  return allow.some(p => pathname === p || pathname.startsWith(p + '/'))
+}
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
@@ -53,7 +96,8 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url)
     }
 
-    const isGuard = profile?.role === 'guard'
+    const role = profile?.role ?? ''
+    const isGuard = role === 'guard'
     const schoolId = profile?.school_id
 
     // ── Guard trying to access dashboard → redirect to scan
@@ -73,11 +117,27 @@ export async function middleware(request: NextRequest) {
       }
     }
 
+    // ── chat17: role route gating inside the dashboard ────
+    if (!isGuard && pathname.startsWith('/dashboard')) {
+      // principal: everything except school Settings
+      if (role === 'principal' && pathname.startsWith('/dashboard/settings')) {
+        const url = request.nextUrl.clone()
+        url.pathname = '/dashboard'
+        return NextResponse.redirect(url)
+      }
+
+      if (!isAllowedPath(role, pathname)) {
+        const url = request.nextUrl.clone()
+        url.pathname = ROLE_HOME[role] ?? '/dashboard'
+        return NextResponse.redirect(url)
+      }
+    }
+
     // ── Logged in user on login/signup → redirect ─────────
     if (pathname === '/login' || pathname === '/signup') {
       const url = request.nextUrl.clone()
-      // Guards go to scan page, admins go to dashboard
-      url.pathname = isGuard ? `/scan/${schoolId}` : '/dashboard'
+      // Guards → scan page; restricted roles → their home; rest → dashboard
+      url.pathname = isGuard ? `/scan/${schoolId}` : (ROLE_HOME[role] ?? '/dashboard')
       return NextResponse.redirect(url)
     }
   }

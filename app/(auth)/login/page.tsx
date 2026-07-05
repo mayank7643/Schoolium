@@ -46,6 +46,12 @@ export default function LoginPage() {
       return
     }
 
+    // Record last login + login history (chat17). Fire-and-forget:
+    // a logging failure must never block the sign-in.
+    supabase
+      .rpc('touch_login', { p_user_agent: navigator.userAgent })
+      .then(() => {}, () => {})
+
     // Guards → scan page, everyone else → dashboard
     if (profile.role === 'guard') {
       router.push(`/scan/${profile.school_id}`)
@@ -89,7 +95,13 @@ export default function LoginPage() {
                 required autoComplete="email" />
             </div>
             <div>
-              <label className="label">Password</label>
+              <div className="flex items-center justify-between">
+                <label className="label">Password</label>
+                <Link href="/forgot-password"
+                  className="text-xs text-brand-600 font-medium hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
               <input type="password" className="input" placeholder="••••••••"
                 value={password} onChange={e => setPassword(e.target.value)}
                 required autoComplete="current-password" />

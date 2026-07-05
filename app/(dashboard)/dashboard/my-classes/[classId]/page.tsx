@@ -110,17 +110,21 @@ export default function ClassWorkspacePage() {
       if (!ct && !subjectHere) { setDenied(true); setLoading(false); return }
       setIsClassTeacher(ct)
 
-      const { data: studentData } = await supabase
-        .from('students')
-        .select('id, full_name, student_uid')
-        .eq('class_id', classId)
-        .eq('is_active', true)
-        .order('full_name')
-
-      const list = (studentData ?? []) as StudentRow[]
-      setStudents(list)
-
+      // The student roster is visible only to the class teacher (or an
+      // admin/principal). Subject teachers can open the class but do not
+      // see the students - enforced server-side by the students RLS
+      // policy, which returns no rows to a non class teacher.
       if (ct) {
+        const { data: studentData } = await supabase
+          .from('students')
+          .select('id, full_name, student_uid')
+          .eq('class_id', classId)
+          .eq('is_active', true)
+          .order('full_name')
+
+        const list = (studentData ?? []) as StudentRow[]
+        setStudents(list)
+
         await fetchDay(istToday(), list.map(s => s.id))
         const { data: feeData } = await supabase.rpc('get_class_fee_summary', { p_class_id: classId })
         setFees((feeData ?? []) as ClassFeeSummaryRow[])
@@ -216,8 +220,9 @@ export default function ClassWorkspacePage() {
             {loading ? '...' : `Class ${className}`}
           </h1>
           <p className="text-slate-500 text-sm">
-            {students.length} student{students.length !== 1 ? 's' : ''}
-            {isClassTeacher ? ' · you are class teacher' : ' · subject class'}
+            {isClassTeacher
+              ? `${students.length} student${students.length !== 1 ? 's' : ''} · you are class teacher`
+              : 'Subject class'}
           </p>
         </div>
       </div>
@@ -249,7 +254,9 @@ export default function ClassWorkspacePage() {
         </>
       )}
 
-      {/* Roster (+ marking buttons for class teacher) */}
+      {/* Roster (+ marking buttons) - class teacher only. Subject
+          teachers see a restricted notice; the students RLS policy
+          also denies them the roster at the database level. */}
       {loading ? (
         <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
           {Array.from({ length: 5 }).map((_, i) => (
@@ -257,6 +264,13 @@ export default function ClassWorkspacePage() {
               <div className="h-4 w-40 bg-slate-100 rounded animate-pulse" />
             </div>
           ))}
+        </div>
+      ) : !isClassTeacher ? (
+        <div className="card text-center py-12">
+          <p className="text-sm font-medium text-slate-600">Student roster is restricted</p>
+          <p className="text-sm text-slate-400 mt-1">
+            Only the class teacher can view the students of this class.
+          </p>
         </div>
       ) : students.length === 0 ? (
         <div className="card text-center py-12">

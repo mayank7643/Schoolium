@@ -33,7 +33,7 @@ const ROLE_HOME: Record<string, string> = {
 // My Classes + class attendance + read-only class fees arrive with
 // the Teacher Workspace module and will be added back here.
 const ROLE_ALLOW: Record<string, string[]> = {
-  teacher: ['/dashboard/students', '/dashboard/leave'],
+  teacher: ['/dashboard/students', '/dashboard/leave', '/dashboard/my-classes'],
   collector: ['/dashboard/fees', '/dashboard/students', '/dashboard/leave'],
   receptionist: ['/dashboard/students', '/dashboard/classes', '/dashboard/leave'],
   staff: ['/dashboard/leave'],

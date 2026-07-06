@@ -37,7 +37,7 @@ const navItems = [
 const ROLE_NAV: Record<string, string[]> = {
   principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance'],
   teacher:      ['/dashboard'],
-  collector:    ['/dashboard/fees', '/dashboard/students'],
+  collector:    ['/dashboard/fees'],
   receptionist: ['/dashboard/students', '/dashboard/classes'],
   staff:        [],
 }

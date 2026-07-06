@@ -88,6 +88,7 @@ export default function FeesPage() {
   const [expandedReceipt,  setExpandedReceipt]  = useState<string | null>(null)
   const printRef = useRef<HTMLIFrameElement>(null)
   const [isAdmin,          setIsAdmin]          = useState(false)
+  const [isManager,        setIsManager]        = useState(false)
   const [loading,          setLoading]          = useState(true)
   const [generating,       setGenerating]       = useState(false)
   const [genResult,        setGenResult]        = useState<{ generated: number; skipped: number } | null>(null)
@@ -111,6 +112,9 @@ export default function FeesPage() {
     const sid = p?.school_id
     const admin = p?.role === 'school_admin'
     setIsAdmin(admin)
+    // Fee Structures defines fee amounts - a management/config surface.
+    // Restricted to admins & principals; collectors do not see it.
+    setIsManager(['school_admin', 'principal', 'super_admin'].includes(p?.role))
 
     const [paymentsRes, reversalsRes, statsRes, schoolRes] = await Promise.all([
       supabase
@@ -371,9 +375,11 @@ export default function FeesPage() {
 
       {/* Navigation actions */}
       <div className="flex flex-wrap gap-2 mb-5">
-        <Link href="/dashboard/fees/structures" className="btn-secondary flex items-center gap-1.5 text-sm">
-          <Settings2 size={14} /> Fee Structures
-        </Link>
+        {isManager && (
+          <Link href="/dashboard/fees/structures" className="btn-secondary flex items-center gap-1.5 text-sm">
+            <Settings2 size={14} /> Fee Structures
+          </Link>
+        )}
         <Link href="/dashboard/fees/defaulters" className="btn-secondary flex items-center gap-1.5 text-sm">
           <AlertTriangle size={14} /> Defaulters
         </Link>

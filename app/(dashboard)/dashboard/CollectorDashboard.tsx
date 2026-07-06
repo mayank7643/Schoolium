@@ -10,7 +10,7 @@
 import { createClient } from '@/utils/supabase/server'
 import Link from 'next/link'
 import {
-  IndianRupee, Wallet, Banknote, AlertCircle, ArrowRight,
+  IndianRupee, Banknote, AlertCircle, ArrowRight, CalendarCheck,
   HandCoins, FileBarChart, ClipboardCheck, CheckCircle2, ReceiptText,
 } from 'lucide-react'
 
@@ -21,6 +21,14 @@ function fmtINR(n: number) {
 // IST calendar date regardless of server timezone
 function istToday() {
   return new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().split('T')[0]
+}
+
+const ATT_LABEL: Record<string, { label: string; cls: string }> = {
+  present:  { label: 'Present',  cls: 'badge-green'  },
+  late:     { label: 'Late',     cls: 'badge-yellow' },
+  half_day: { label: 'Half day', cls: 'badge-blue'   },
+  absent:   { label: 'Absent',   cls: 'badge-red'    },
+  leave:    { label: 'On leave', cls: 'badge-yellow' },
 }
 
 interface PaymentRow {
@@ -47,14 +55,19 @@ export default async function CollectorDashboard({
   const supabase = await createClient()
 
   const today      = istToday()
-  const monthStart = today.slice(0, 7) + '-01'
+  const month      = today.slice(0, 7)
+  const monthStart = month + '-01'
 
-  const [staffRes, monthRes, eodRes, statsRes] = await Promise.all([
-    supabase
-      .from('staff')
-      .select('full_name, designation')
-      .eq('profile_id', userId)
-      .maybeSingle(),
+  // Need the staff id first - attendance is keyed by staff_id.
+  const { data: staffData } = await supabase
+    .from('staff')
+    .select('id, full_name, designation')
+    .eq('profile_id', userId)
+    .maybeSingle()
+  const staff   = staffData as { id: string; full_name: string; designation: string | null } | null
+  const staffId = staff?.id ?? null
+
+  const [monthRes, eodRes, statsRes, attRes, attSummaryRes] = await Promise.all([
     // This collector's own payments this month (newest first)
     supabase
       .from('fee_payments')
@@ -73,9 +86,21 @@ export default async function CollectorDashboard({
       .maybeSingle(),
     // School-wide fee context (defaulters / outstanding)
     supabase.rpc('get_fee_dashboard_stats', { p_school_id: schoolId }),
+    // This collector's own attendance today
+    staffId
+      ? supabase
+          .from('staff_attendance')
+          .select('status, check_in_time, check_out_time')
+          .eq('staff_id', staffId)
+          .eq('attendance_date', today)
+          .maybeSingle()
+      : Promise.resolve({ data: null }),
+    // This month's attendance summary (own row only for non-admins)
+    staffId
+      ? supabase.rpc('get_staff_attendance_summary', { p_month: month })
+      : Promise.resolve({ data: null }),
   ])
 
-  const staff = staffRes.data as { full_name: string; designation: string | null } | null
   const rows  = (monthRes.data ?? []) as unknown as PaymentRow[]
 
   // Approved reversals don't count as money collected
@@ -97,6 +122,13 @@ export default async function CollectorDashboard({
   const stats       = (statsRes.data as any)?.[0] ?? null
   const defaulters  = Number(stats?.defaulters_count ?? 0)
   const outstanding = Number(stats?.total_pending ?? 0)
+
+  // My attendance (own record only)
+  const todayAtt = (attRes.data ?? null) as
+    { status: string; check_in_time: string | null; check_out_time: string | null } | null
+  const attRows  = (attSummaryRes.data ?? []) as any[]
+  const myMonth  = attRows.find(r => r.staff_id === staffId) ?? attRows[0] ?? null
+  const attBadge = todayAtt ? (ATT_LABEL[todayAtt.status] ?? ATT_LABEL.present) : null
 
   // Group this collector's payments by receipt → one collection per row
   const recMap: Record<string, PaymentRow[]> = {}
@@ -233,6 +265,40 @@ export default async function CollectorDashboard({
             reconcile today. Close the day to record your handover.
           </p>
         )}
+      </div>
+
+      {/* My attendance (own record only) */}
+      <div className="card mb-5">
+        <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2 mb-1">
+          <CalendarCheck size={16} className="text-slate-400" /> My attendance
+        </h2>
+        <div className="flex flex-wrap items-center gap-8 mt-2">
+          <div>
+            <p className="text-[11px] text-slate-400 uppercase tracking-wide mb-1.5">Today</p>
+            {attBadge ? (
+              <div className="flex items-center gap-2">
+                <span className={attBadge.cls}>{attBadge.label}</span>
+                {todayAtt?.check_in_time && (
+                  <span className="text-xs text-slate-400 font-mono">
+                    {todayAtt.check_in_time.slice(0, 5)}
+                    {todayAtt.check_out_time ? ` - ${todayAtt.check_out_time.slice(0, 5)}` : ''}
+                  </span>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">Not marked yet</p>
+            )}
+          </div>
+          <div>
+            <p className="text-[11px] text-slate-400 uppercase tracking-wide mb-1.5">This month</p>
+            <p className="text-lg font-bold text-slate-900 leading-none">
+              {myMonth ? `${myMonth.percentage}%` : '—'}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              {myMonth ? `${myMonth.working_days} working days` : 'no records yet'}
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* My recent receipts */}

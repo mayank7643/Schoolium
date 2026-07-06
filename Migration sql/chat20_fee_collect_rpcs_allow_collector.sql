@@ -5,7 +5,7 @@
 -- ============================================================
 -- Assumes chat02..chat19 are already applied.
 --
--- Two collector-facing fee RPCs were still stuck on the original
+-- Three collector-facing fee surfaces were still stuck on the original
 -- 'school_admin'-only guard, while the rest of the fee module had been
 -- widened to include 'collector' in later chats:
 --
@@ -14,21 +14,27 @@
 --   * get_defaulters           (chat13) - collector got an empty
 --       Defaulters list (the RPC denied them, the UI showed "No
 --       defaulters").
+--   * fee_payments RLS         (chat11) - the "school_admin_fee_payments"
+--       FOR ALL policy was admin-only, so the "Recent payments" list
+--       (a direct SELECT on fee_payments) was empty for collectors even
+--       though the aggregate stats (SECURITY DEFINER RPC) showed totals.
 --
 -- Already collector-enabled, left untouched here:
 --   record_bulk_fee_payment, verify_admin_override_pin (chat16),
 --   log_fee_audit_event (chat13), get_student_billing_summary (chat13
 --   v3), get_fee_summary (chat16), submit_eod_closure (chat13),
---   get_fee_dashboard_stats (chat13, no role gate).
+--   get_fee_dashboard_stats (chat13, no role gate). fee_dues read is
+--   already open to any active school member (chat13).
 --
--- Fix: widen both guards to role IN ('school_admin','collector').
--- Both return only fee-relevant columns (name, UID, father, phone,
--- class, balances) - no Aadhaar / address / DOB - so collectors still
--- never see sensitive student PII through them.
+-- Fix: widen the two RPC guards to role IN ('school_admin','collector')
+-- and add a collector SELECT policy on fee_payments (reads only -
+-- writes stay via the SECURITY DEFINER record_bulk_fee_payment RPC).
+-- All of these return only fee-relevant columns - no Aadhaar / address
+-- / DOB - so collectors still never see sensitive student PII.
 --
 -- Rules honoured: pure ASCII, CREATE OR REPLACE (identical signature +
--- return type - no DROP needed), SECURITY DEFINER sets search_path,
--- REVOKE/GRANT kept.
+-- return type - no DROP needed), DROP POLICY IF EXISTS + CREATE,
+-- SECURITY DEFINER sets search_path, REVOKE/GRANT kept.
 -- ============================================================
 
 
@@ -167,6 +173,27 @@ $$;
 
 REVOKE ALL  ON FUNCTION public.get_defaulters(UUID, UUID, TEXT) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.get_defaulters(UUID, UUID, TEXT) TO authenticated;
+
+
+-- ------------------------------------------------------------
+-- 3. fee_payments - let collectors READ their school's payments
+-- (the "Recent payments" list). Writes still flow only through the
+-- SECURITY DEFINER record_bulk_fee_payment RPC, so no write policy is
+-- added. The existing "school_admin_fee_payments" FOR ALL policy is
+-- left in place for admins; permissive policies are OR-ed.
+-- ------------------------------------------------------------
+DROP POLICY IF EXISTS "collector_reads_fee_payments" ON public.fee_payments;
+CREATE POLICY "collector_reads_fee_payments"
+  ON public.fee_payments
+  FOR SELECT
+  USING (
+    school_id IN (
+      SELECT p.school_id FROM public.profiles p
+      WHERE p.id        = auth.uid()
+        AND p.role      = 'collector'
+        AND p.is_active = true
+    )
+  );
 
 
 -- ------------------------------------------------------------

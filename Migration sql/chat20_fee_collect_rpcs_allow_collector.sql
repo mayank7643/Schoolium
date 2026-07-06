@@ -5,21 +5,28 @@
 -- ============================================================
 -- Assumes chat02..chat19 are already applied.
 --
--- Bug: the fee-collection flow relies on five RPCs. The three added
--- later (chat16: record_bulk_fee_payment, verify_admin_override_pin;
--- chat13: log_fee_audit_event) already allow role IN
--- ('school_admin','collector'). But the two chat12-era RPCs still
--- hard-code role = 'school_admin':
---   * search_students_omnibox   (find a student to collect from)
---   * get_student_billing_summary (load that student's pending dues)
--- So a collector gets "Access denied" the moment they search or open a
--- student, and cannot collect fees at all.
+-- Bug: a collector could not SEARCH for a student on the Collect Fee
+-- screen - the omnibox threw "Access denied". search_students_omnibox
+-- is the only collect-flow RPC still stuck on the original chat12 guard
+-- (role = 'school_admin'); every other RPC in the flow already allows
+-- 'collector':
+--   * record_bulk_fee_payment       (chat16) - already collector-ok
+--   * verify_admin_override_pin      (chat16) - already collector-ok
+--   * log_fee_audit_event            (chat13) - already collector-ok
+--   * get_student_billing_summary    (chat13 v3) - already collector-ok
+-- Collectors previously reached the collect screen via the student
+-- profile page (student_id in the URL, skipping search); removing
+-- student-page access for collectors exposed this one gap.
 --
--- Fix: widen the guard on those two to ('school_admin','collector'),
--- matching the rest of the collect flow. Both RPCs already return only
--- fee-relevant columns (name, UID, father, phone, class, dues) - no
--- Aadhaar / address / DOB - so this stays consistent with keeping
--- sensitive student PII away from collectors.
+-- Fix: widen search_students_omnibox to role IN ('school_admin',
+-- 'collector'), matching the rest of the flow. It returns only
+-- fee-relevant columns (name, UID, father, phone, class) - no Aadhaar
+-- / address / DOB - so collectors still never see sensitive PII here.
+--
+-- NOTE: get_student_billing_summary is intentionally NOT touched. Its
+-- live definition (chat13 "v3") already grants collector access and has
+-- a richer return shape; recreating it here from the old v1 would break
+-- billing (and error with 42P13 return-type change).
 --
 -- Rules honoured: pure ASCII, CREATE OR REPLACE (identical signature +
 -- return type), SECURITY DEFINER sets search_path, REVOKE/GRANT kept.
@@ -27,7 +34,7 @@
 
 
 -- ------------------------------------------------------------
--- 1. search_students_omnibox - allow collector
+-- search_students_omnibox - allow collector
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.search_students_omnibox(
   p_school_id  UUID,
@@ -98,117 +105,6 @@ $$;
 
 REVOKE ALL ON FUNCTION public.search_students_omnibox(UUID,TEXT,UUID,INT) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.search_students_omnibox(UUID,TEXT,UUID,INT) TO authenticated;
-
-
--- ------------------------------------------------------------
--- 2. get_student_billing_summary - allow collector
--- ------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.get_student_billing_summary(
-  p_student_id UUID
-)
-RETURNS TABLE (
-  -- Student
-  student_id          UUID,
-  full_name           TEXT,
-  student_uid         TEXT,
-  father_name         TEXT,
-  parent_phone        TEXT,
-  class_name          TEXT,
-  class_section       TEXT,
-  -- Assigned fee structure
-  fee_structure_id    UUID,
-  fee_structure_name  TEXT,
-  -- Individual pending dues (one row per due)
-  due_id              UUID,
-  due_label           TEXT,
-  due_month           TEXT,
-  due_date            DATE,
-  total_due           NUMERIC,
-  amount_paid         NUMERIC,
-  balance             NUMERIC,
-  status              TEXT,
-  late_fee_applied    BOOLEAN,
-  -- Pre-calculated totals across all pending dues
-  grand_total_due     NUMERIC,
-  grand_total_paid    NUMERIC,
-  grand_balance       NUMERIC
-)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_caller_school UUID;
-  v_student_school UUID;
-  v_grand_due     NUMERIC;
-  v_grand_paid    NUMERIC;
-  v_grand_balance NUMERIC;
-BEGIN
-
-  SELECT p.school_id INTO v_caller_school
-  FROM public.profiles p
-  WHERE p.id        = auth.uid()
-    AND p.role      IN ('school_admin', 'collector')
-    AND p.is_active = true;
-
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Access denied';
-  END IF;
-
-  SELECT s.school_id INTO v_student_school
-  FROM public.students s
-  WHERE s.id = p_student_id;
-
-  IF v_student_school IS DISTINCT FROM v_caller_school THEN
-    RAISE EXCEPTION 'Student not found';
-  END IF;
-
-  -- Aggregate pending totals
-  SELECT
-    COALESCE(SUM(d.total_due), 0),
-    COALESCE(SUM(d.amount_paid), 0),
-    COALESCE(SUM(d.balance), 0)
-  INTO v_grand_due, v_grand_paid, v_grand_balance
-  FROM public.fee_dues d
-  WHERE d.student_id = p_student_id
-    AND d.status NOT IN ('paid', 'waived');
-
-  RETURN QUERY
-  SELECT
-    s.id,
-    s.full_name::TEXT,
-    s.student_uid::TEXT,
-    s.father_name::TEXT,
-    s.parent_phone::TEXT,
-    c.name::TEXT,
-    c.section::TEXT,
-    fs.id,
-    fs.name::TEXT,
-    d.id,
-    d.label::TEXT,
-    d.month::TEXT,
-    d.due_date,
-    d.total_due,
-    d.amount_paid,
-    d.balance,
-    d.status::TEXT,
-    d.late_fee_applied,
-    v_grand_due,
-    v_grand_paid,
-    v_grand_balance
-  FROM public.students s
-  LEFT JOIN public.classes c         ON c.id  = s.class_id
-  LEFT JOIN public.fee_structures fs ON fs.id = s.fee_structure_id
-  LEFT JOIN public.fee_dues d        ON d.student_id = s.id
-    AND d.status NOT IN ('paid', 'waived')
-  WHERE s.id = p_student_id
-  ORDER BY d.due_date ASC NULLS LAST;
-
-END;
-$$;
-
-REVOKE ALL ON FUNCTION public.get_student_billing_summary(UUID) FROM PUBLIC;
-GRANT  EXECUTE ON FUNCTION public.get_student_billing_summary(UUID) TO authenticated;
 
 
 -- ------------------------------------------------------------

@@ -34,7 +34,7 @@ const ROLE_HOME: Record<string, string> = {
 // the Teacher Workspace module and will be added back here.
 const ROLE_ALLOW: Record<string, string[]> = {
   teacher: ['/dashboard/leave', '/dashboard/my-classes'],
-  collector: ['/dashboard/fees', '/dashboard/students', '/dashboard/leave'],
+  collector: ['/dashboard/fees', '/dashboard/leave'],
   receptionist: ['/dashboard/students', '/dashboard/classes', '/dashboard/leave'],
   staff: ['/dashboard/leave'],
 }
@@ -123,6 +123,16 @@ export async function middleware(request: NextRequest) {
       if (role === 'principal' && pathname.startsWith('/dashboard/settings')) {
         const url = request.nextUrl.clone()
         url.pathname = '/dashboard'
+        return NextResponse.redirect(url)
+      }
+
+      // Fee Structures is a management/config surface (defines fee
+      // amounts) - admins & principals only, even for fee-enabled
+      // roles like collector who otherwise have the fees section.
+      if (pathname.startsWith('/dashboard/fees/structures') &&
+          !['school_admin', 'principal', 'super_admin'].includes(role)) {
+        const url = request.nextUrl.clone()
+        url.pathname = ROLE_HOME[role] ?? '/dashboard'
         return NextResponse.redirect(url)
       }
 

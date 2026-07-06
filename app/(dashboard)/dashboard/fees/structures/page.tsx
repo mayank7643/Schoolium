@@ -10,6 +10,7 @@
 // Manual billing (fees page) stays completely separate and intact.
 
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { createClient } from '@/utils/supabase/client'
 import {
   Plus, X, ChevronDown, ChevronUp, Trash2,
@@ -993,11 +994,22 @@ export default function FeeStructuresPage() {
   const [structures, setStructures]       = useState<StructureWithItems[]>([])
   const [classes, setClasses]             = useState<ClassOption[]>([])
   const [loading, setLoading]             = useState(true)
+  const [denied, setDenied]               = useState(false)
   const [showModal, setShowModal]         = useState(false)
   const [editingStructure, setEditingStructure] = useState<StructureWithItems | null>(null)
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
+
+    // Fee Structures is admin/principal only. Middleware already blocks
+    // other roles from this route; this is a defensive in-page guard.
+    const { data: profile } = await supabase.from('profiles').select('role').single()
+    const role = (profile as any)?.role
+    if (!['school_admin', 'principal', 'super_admin'].includes(role)) {
+      setDenied(true)
+      setLoading(false)
+      return
+    }
 
     const [structuresRes, classesRes] = await Promise.all([
       supabase
@@ -1091,6 +1103,22 @@ export default function FeeStructuresPage() {
   // Stats
   const activeCount   = structures.filter(s => s.is_active).length
   const classesCount  = new Set(structures.filter(s => s.class_id).map(s => s.class_id)).size
+
+  if (denied) {
+    return (
+      <div className="max-w-3xl mx-auto">
+        <div className="card">
+          <h1 className="text-lg font-semibold text-slate-900 mb-1">Fee Structures</h1>
+          <p className="text-sm text-slate-500">
+            Only an admin or principal can manage fee structures.
+          </p>
+          <Link href="/dashboard/fees" className="btn-secondary text-sm inline-block mt-3">
+            Back to fees
+          </Link>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-3xl mx-auto">

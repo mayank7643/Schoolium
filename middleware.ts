@@ -19,7 +19,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 // Where each restricted role lands after login / when blocked
 const ROLE_HOME: Record<string, string> = {
   teacher: '/dashboard',
-  collector: '/dashboard/fees',
+  collector: '/dashboard',
   receptionist: '/dashboard/students',
   staff: '/dashboard/leave',
 }

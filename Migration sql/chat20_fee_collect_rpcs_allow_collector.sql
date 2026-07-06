@@ -1,40 +1,39 @@
 -- ============================================================
--- SCHOOLIUM - CHAT 20 SESSION - COLLECTOR FEE-COLLECTION FIX
+-- SCHOOLIUM - CHAT 20 SESSION - COLLECTOR FEE-MODULE FIX
 -- fee_collect_rpcs_allow_collector
 -- Generated 06 July 2026 - validated on PostgreSQL 16
 -- ============================================================
 -- Assumes chat02..chat19 are already applied.
 --
--- Bug: a collector could not SEARCH for a student on the Collect Fee
--- screen - the omnibox threw "Access denied". search_students_omnibox
--- is the only collect-flow RPC still stuck on the original chat12 guard
--- (role = 'school_admin'); every other RPC in the flow already allows
--- 'collector':
---   * record_bulk_fee_payment       (chat16) - already collector-ok
---   * verify_admin_override_pin      (chat16) - already collector-ok
---   * log_fee_audit_event            (chat13) - already collector-ok
---   * get_student_billing_summary    (chat13 v3) - already collector-ok
--- Collectors previously reached the collect screen via the student
--- profile page (student_id in the URL, skipping search); removing
--- student-page access for collectors exposed this one gap.
+-- Two collector-facing fee RPCs were still stuck on the original
+-- 'school_admin'-only guard, while the rest of the fee module had been
+-- widened to include 'collector' in later chats:
 --
--- Fix: widen search_students_omnibox to role IN ('school_admin',
--- 'collector'), matching the rest of the flow. It returns only
--- fee-relevant columns (name, UID, father, phone, class) - no Aadhaar
--- / address / DOB - so collectors still never see sensitive PII here.
+--   * search_students_omnibox  (chat12) - collector could not SEARCH a
+--       student on the Collect Fee screen ("Access denied").
+--   * get_defaulters           (chat13) - collector got an empty
+--       Defaulters list (the RPC denied them, the UI showed "No
+--       defaulters").
 --
--- NOTE: get_student_billing_summary is intentionally NOT touched. Its
--- live definition (chat13 "v3") already grants collector access and has
--- a richer return shape; recreating it here from the old v1 would break
--- billing (and error with 42P13 return-type change).
+-- Already collector-enabled, left untouched here:
+--   record_bulk_fee_payment, verify_admin_override_pin (chat16),
+--   log_fee_audit_event (chat13), get_student_billing_summary (chat13
+--   v3), get_fee_summary (chat16), submit_eod_closure (chat13),
+--   get_fee_dashboard_stats (chat13, no role gate).
+--
+-- Fix: widen both guards to role IN ('school_admin','collector').
+-- Both return only fee-relevant columns (name, UID, father, phone,
+-- class, balances) - no Aadhaar / address / DOB - so collectors still
+-- never see sensitive student PII through them.
 --
 -- Rules honoured: pure ASCII, CREATE OR REPLACE (identical signature +
--- return type), SECURITY DEFINER sets search_path, REVOKE/GRANT kept.
+-- return type - no DROP needed), SECURITY DEFINER sets search_path,
+-- REVOKE/GRANT kept.
 -- ============================================================
 
 
 -- ------------------------------------------------------------
--- search_students_omnibox - allow collector
+-- 1. search_students_omnibox - allow collector
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.search_students_omnibox(
   p_school_id  UUID,
@@ -105,6 +104,69 @@ $$;
 
 REVOKE ALL ON FUNCTION public.search_students_omnibox(UUID,TEXT,UUID,INT) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.search_students_omnibox(UUID,TEXT,UUID,INT) TO authenticated;
+
+
+-- ------------------------------------------------------------
+-- 2. get_defaulters - allow collector
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_defaulters(
+  p_school_id     UUID,
+  p_class_id      UUID DEFAULT NULL,
+  p_academic_year TEXT DEFAULT NULL
+)
+RETURNS TABLE (
+  student_id      UUID,
+  full_name       TEXT,
+  student_uid     TEXT,
+  class_name      TEXT,
+  class_section   TEXT,
+  total_balance   NUMERIC,
+  oldest_due_date DATE,
+  days_overdue    INTEGER,
+  dues_count      BIGINT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id        = auth.uid()
+      AND school_id = p_school_id
+      AND role      IN ('school_admin', 'collector')
+      AND is_active = true
+  ) THEN
+    RAISE EXCEPTION 'Access denied';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    s.id,
+    s.full_name,
+    s.student_uid,
+    c.name,
+    c.section,
+    SUM(d.balance),
+    MIN(d.due_date),
+    (CURRENT_DATE - MIN(d.due_date))::INTEGER,
+    COUNT(d.id)
+  FROM public.students s
+  JOIN public.fee_dues d     ON d.student_id = s.id
+  LEFT JOIN public.classes c ON c.id         = s.class_id
+  WHERE d.school_id   = p_school_id
+    AND d.status      IN ('unpaid','partial')
+    AND d.balance     > 0
+    AND d.due_date    < CURRENT_DATE
+    AND (p_class_id      IS NULL OR s.class_id      = p_class_id)
+    AND (p_academic_year IS NULL OR d.academic_year = p_academic_year)
+  GROUP BY s.id, s.full_name, s.student_uid, c.name, c.section
+  ORDER BY total_balance DESC;
+END;
+$$;
+
+REVOKE ALL  ON FUNCTION public.get_defaulters(UUID, UUID, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.get_defaulters(UUID, UUID, TEXT) TO authenticated;
 
 
 -- ------------------------------------------------------------

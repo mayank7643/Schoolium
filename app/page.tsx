@@ -40,7 +40,7 @@ export default function HomePage() {
 
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
           <Link href="/signup" className="btn-primary px-8 py-3 text-base w-full sm:w-auto">
-            Start free — ₹299/month
+            Start free
           </Link>
           <Link href="/login" className="btn-secondary px-8 py-3 text-base w-full sm:w-auto">
             Sign in to dashboard

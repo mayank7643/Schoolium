@@ -466,4 +466,4 @@ pure ASCII, single PostgREST schema reload at the end — matching chat17's form
 
 ---
 
-*Step 3 — Relationships: see `03-relationships.md`. Next: Step 4 — Workflow design.*
+*Step 3 — Relationships: see `03-relationships.md`. Step 4 — Workflows: see `04-workflows.md`.*

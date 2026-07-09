@@ -77,10 +77,13 @@ export default function AlertsOverviewPage() {
   const [notifications, setNotifications] = useState<AlertNotification[]>([])
   const [spend, setSpend] = useState<SpendRow | null>(null)
   const [alertsEnabled, setAlertsEnabled] = useState<boolean | null>(null)
+  const [loadError, setLoadError] = useState('')
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async (r: RangeKey) => {
     setLoading(true)
+    setLoadError('')
+    try {
     const supabase = createClient()
 
     const { data: { user } } = await supabase.auth.getUser()
@@ -108,11 +111,26 @@ export default function AlertsOverviewPage() {
         : Promise.resolve({ data: null }),
     ])
 
+    // Missing table = the chat21 migration is not applied yet.
+    if (outbox.error) {
+      const m = outbox.error.message
+      setLoadError(
+        /does not exist|schema cache/i.test(m)
+          ? 'The alerts schema is not in this database yet. Run "Migration sql/chat21_alerts_byog_foundation.sql" in the Supabase SQL editor, then reload. (' + m + ')'
+          : m,
+      )
+      return
+    }
+
     setRows((outbox.data as LedgerRow[]) || [])
     setNotifications((notifs.data as AlertNotification[]) || [])
     setSpend((guard.data as SpendRow) || null)
     setAlertsEnabled((school.data as { alerts_enabled: boolean } | null)?.alerts_enabled ?? null)
-    setLoading(false)
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { void load(range) }, [load, range])
@@ -190,6 +208,12 @@ export default function AlertsOverviewPage() {
           )}
         </div>
       </div>
+
+      {loadError && (
+        <div className="card mb-6 border-l-4 border-red-500 text-sm text-red-700 flex items-start gap-3">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" /> {loadError}
+        </div>
+      )}
 
       {/* Pipeline disabled banner */}
       {alertsEnabled === false && (

@@ -71,7 +71,7 @@ export default function ComposeNoticePage() {
       setSchoolName(Array.isArray(school) ? school[0]?.name ?? '' : school?.name ?? '')
 
       // Approved channel templates joined onto their human templates.
-      const { data: mts } = await supabase
+      const { data: mts, error: mtErr } = await supabase
         .from('message_templates')
         .select('id, key, body, channel_templates(channel, category, approval_status)')
         .order('key')
@@ -89,6 +89,13 @@ export default function ComposeNoticePage() {
         }))
         .filter((t) => t.channels.length > 0)
       setTemplates(options)
+      if (mtErr) {
+        setError(
+          /does not exist|schema cache/i.test(mtErr.message)
+            ? 'The alerts schema is not in this database yet. Run "Migration sql/chat21_alerts_byog_foundation.sql" in the Supabase SQL editor. (' + mtErr.message + ')'
+            : mtErr.message,
+        )
+      }
 
       const { data: students } = await supabase
         .from('students').select('class_label').eq('is_active', true).not('class_label', 'is', null)
@@ -227,6 +234,7 @@ export default function ComposeNoticePage() {
         <div className="card h-64 animate-pulse bg-slate-50" />
       ) : templates.length === 0 ? (
         <div className="card text-center py-12 text-sm text-slate-500">
+          {error && <p className="text-red-600 mb-2">{error}</p>}
           No approved templates yet. Ask your school admin to set them up in{' '}
           <Link href="/dashboard/alerts/settings" className="text-brand-600 font-medium">Alerts settings</Link>.
         </div>

@@ -51,13 +51,18 @@ function bad(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status })
 }
 
-function service(): SupabaseClient {
-  return createServiceClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    { auth: { persistSession: false } },
-  )
+// Null when the deployment is missing its server env vars - callers
+// return a clear JSON error instead of crashing into an HTML 500
+// (which the settings page cannot parse).
+function service(): SupabaseClient | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return null
+  return createServiceClient(url, key, { auth: { persistSession: false } })
 }
+
+const ENV_ERROR =
+  'Server is not configured: set SUPABASE_SERVICE_ROLE_KEY (and the ALERTS_* secrets from env.local.example) in your deployment env vars.'
 
 // UI-safe projection - the only shape that ever leaves this route.
 function summarize(row: VaultRow) {
@@ -97,6 +102,8 @@ export async function GET() {
   if (auth instanceof NextResponse) return auth
 
   const db = service()
+  if (!db) return bad(ENV_ERROR, 500)
+
   const { data, error } = await db
     .from('school_channels')
     .select('id, school_id, channel, provider, config, secret_ciphertext, secret_iv, secret_tag, secret_fingerprint, health, last_verified_at, balance_hint_paise')
@@ -104,11 +111,21 @@ export async function GET() {
     .order('channel')
   if (error) return bad(error.message, 500)
 
+  // Shown in the wizard: the callback URL the school pastes into their
+  // gateway (Meta uses it as the verify_token too). Null (with a hint)
+  // when ALERTS_WEBHOOK_SECRET is not set yet - never a crash.
+  let token: string | null = null
+  let tokenError: string | null = null
+  try {
+    token = webhookToken(auth.schoolId)
+  } catch (e) {
+    tokenError = e instanceof Error ? e.message : String(e)
+  }
+
   return NextResponse.json({
     channels: ((data as VaultRow[]) || []).map(summarize),
-    // Shown in the wizard: the callback URL the school pastes into
-    // their gateway (Meta uses it as the verify_token too).
-    webhook_token: webhookToken(auth.schoolId),
+    webhook_token: token,
+    webhook_token_error: tokenError,
   })
 }
 
@@ -133,6 +150,7 @@ export async function POST(req: Request) {
   }
 
   const db = service()
+  if (!db) return bad(ENV_ERROR, 500)
 
   // ---- re-verify a stored credential ------------------------------
   if (body.action === 'verify') {
@@ -229,6 +247,7 @@ export async function DELETE(req: Request) {
   if (!body.id) return bad('id is required')
 
   const db = service()
+  if (!db) return bad(ENV_ERROR, 500)
   const { error, count } = await db
     .from('school_channels')
     .delete({ count: 'exact' })

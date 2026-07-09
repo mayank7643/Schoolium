@@ -94,6 +94,7 @@ export default function AlertsSettingsPage() {
   const [webhookToken, setWebhookToken] = useState('')
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const [loadError, setLoadError] = useState('')
   const [saving, setSaving] = useState(false)
 
   // gateway form
@@ -113,31 +114,54 @@ export default function AlertsSettingsPage() {
   }
 
   const load = useCallback(async () => {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: profile } = await supabase
-      .from('profiles').select('role, school_id').eq('id', user.id).single()
-    setRole(profile?.role ?? '')
-    if (profile?.role !== 'school_admin') { setLoading(false); return }
+    setLoadError('')
+    try {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: profile } = await supabase
+        .from('profiles').select('role, school_id').eq('id', user.id).single()
+      setRole(profile?.role ?? '')
+      if (profile?.role !== 'school_admin') return
 
-    const [schoolRes, tplRes, gwRes] = await Promise.all([
-      supabase
-        .from('schools')
-        .select('id, alerts_enabled, checkout_alerts_enabled, absent_cutoff_time, quiet_hours_start, quiet_hours_end, stale_alert_minutes')
-        .eq('id', profile.school_id).single(),
-      supabase
-        .from('message_templates')
-        .select('id, key, body, channel_templates(id, channel, category, provider_template_id, var_map, approval_status)')
-        .order('key'),
-      fetch('/api/alerts/channels').then((r) => r.json()),
-    ])
+      const [schoolRes, tplRes, gwRes] = await Promise.all([
+        supabase
+          .from('schools')
+          .select('id, alerts_enabled, checkout_alerts_enabled, absent_cutoff_time, quiet_hours_start, quiet_hours_end, stale_alert_minutes')
+          .eq('id', profile.school_id).single(),
+        supabase
+          .from('message_templates')
+          .select('id, key, body, channel_templates(id, channel, category, provider_template_id, var_map, approval_status)')
+          .order('key'),
+        // The vault API can fail while the deployment is half set up
+        // (missing env vars) - degrade to an inline error, never hang.
+        fetch('/api/alerts/channels')
+          .then(async (r) => (await r.json()) as { channels?: GatewaySummary[]; webhook_token?: string; error?: string })
+          .catch(() => ({ channels: [], webhook_token: '', error: 'Could not reach /api/alerts/channels' })),
+      ])
 
-    setSchool(schoolRes.data as SchoolSettings)
-    setTemplates((tplRes.data as unknown as Tpl[]) || [])
-    setGateways((gwRes.channels as GatewaySummary[]) || [])
-    setWebhookToken((gwRes.webhook_token as string) || '')
-    setLoading(false)
+      // Missing columns/tables = the chat21 migration has not been
+      // applied to this database yet. Say so instead of spinning.
+      if (schoolRes.error) {
+        const m = schoolRes.error.message
+        setLoadError(
+          /does not exist|schema cache/i.test(m)
+            ? 'The alerts schema is not in this database yet. Run "Migration sql/chat21_alerts_byog_foundation.sql" in the Supabase SQL editor, then reload. (' + m + ')'
+            : m,
+        )
+        return
+      }
+
+      setSchool(schoolRes.data as SchoolSettings)
+      setTemplates((tplRes.data as unknown as Tpl[]) || [])
+      setGateways(gwRes.channels || [])
+      setWebhookToken(gwRes.webhook_token || '')
+      if (gwRes.error) setMsg({ kind: 'err', text: gwRes.error })
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { void load() }, [load])
@@ -239,7 +263,7 @@ export default function AlertsSettingsPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'upsert', channel: gwChannel, provider: gwProvider, config, secret: gwSecret }),
     })
-    const body = await res.json()
+    const body = await res.json().catch(() => ({ error: 'Server returned a non-JSON error' }))
     setGwBusy(false)
     if (!res.ok) { flash('err', body.error ?? 'Failed'); return }
     flash('ok', `Credential stored. Health: ${body.channel.health}${body.detail ? ` — ${body.detail}` : ''}`)
@@ -252,7 +276,7 @@ export default function AlertsSettingsPage() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'verify', id }),
     })
-    const body = await res.json()
+    const body = await res.json().catch(() => ({ error: 'Server returned a non-JSON error' }))
     if (!res.ok) flash('err', body.error ?? 'Verify failed')
     else flash(body.health === 'ok' ? 'ok' : 'err', `Health: ${body.health}${body.detail ? ` — ${body.detail}` : ''}`)
     void load()
@@ -293,7 +317,11 @@ export default function AlertsSettingsPage() {
         </div>
       )}
 
-      {loading || !school ? (
+      {loadError ? (
+        <div className="card border-l-4 border-red-500 text-sm text-red-700 flex items-start gap-2">
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {loadError}
+        </div>
+      ) : loading || !school ? (
         <div className="card h-64 animate-pulse bg-slate-50" />
       ) : (
         <div className="space-y-6">

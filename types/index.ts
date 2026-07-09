@@ -4,7 +4,7 @@
 // ============================================
 
 export type Plan           = 'basic' | 'standard' | 'premium'
-export type Role           = 'super_admin' | 'school_admin' | 'principal' | 'teacher' | 'collector' | 'receptionist' | 'staff' | 'guard' | 'parent'
+export type Role           = 'super_admin' | 'school_admin' | 'operator' | 'principal' | 'teacher' | 'collector' | 'receptionist' | 'staff' | 'guard' | 'parent'
 export type Gender         = 'male' | 'female' | 'other'
 export type EntryType      = 'entry' | 'exit'
 
@@ -48,6 +48,14 @@ export interface School {
   late_fee_waiver_max_pct: number
   late_fee_waiver_max_flat: number
   admin_override_pin: string | null
+  // Alerts BYOG pipeline (chat21) — independent of the legacy wa_* gates
+  alerts_enabled: boolean
+  alerts_timezone: string
+  absent_cutoff_time: string | null        // 'HH:MM:SS', null = absence alerts off
+  checkout_alerts_enabled: boolean
+  quiet_hours_start: string
+  quiet_hours_end: string
+  stale_alert_minutes: number | null
 }
 
 export interface Profile {
@@ -89,6 +97,8 @@ export interface Student {
   admission_date: string
   created_at: string
   parent_phone_opted_out: boolean
+  external_ref: string | null        // the school ERP's student id (CSV upsert key, chat21)
+  class_label: string | null         // free-text class filter, e.g. "5-A" (chat21)
   fee_structure_id: string | null    // assigned default fee structure
   // joined
   classes?: Class
@@ -590,4 +600,202 @@ export interface ClassFeeSummaryRow {
   total_paid: number
   balance: number
   overdue_count: number
+}
+
+
+// ============================================
+// ALERTS BYOG PIPELINE (chat21)
+// docs/schoolium-alerts-blueprint.md
+// ============================================
+
+export type AlertChannel        = 'sms' | 'whatsapp' | 'email'
+export type TemplateCategory    = 'utility' | 'marketing' | 'service' | 'transactional'
+export type ApprovalStatus      = 'draft' | 'submitted' | 'approved' | 'rejected' | 'paused'
+export type OutboxStatus        = 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'dead'
+export type ChannelHealth       = 'unverified' | 'ok' | 'auth_failed' | 'low_balance' | 'suspended'
+export type ChannelProvider     = 'meta_cloud' | 'msg91' | 'gupshup' | 'generic_http' | 'smtp' | 'fake'
+export type AlertEventType      = 'student.checked_in' | 'student.checked_out' | 'student.absent_at_cutoff' | 'notice.published'
+export type NotificationKind    = 'spend_cap_hit' | 'stale_suppressed' | 'enqueue_error' | 'channel_unhealthy' | 'low_balance' | 'absent_skipped_no_scans'
+export type ImportBatchStatus   = 'uploaded' | 'validated' | 'applied' | 'discarded'
+export type ImportRowAction     = 'new' | 'update' | 'unchanged' | 'remove' | 'invalid'
+
+export interface Guardian {
+  id: string
+  school_id: string
+  full_name: string | null
+  created_at: string
+}
+
+export interface StudentGuardian {
+  student_id: string
+  guardian_id: string
+  relation: string | null
+  is_primary: boolean
+}
+
+export interface ContactMethod {
+  id: string
+  guardian_id: string
+  channel: AlertChannel
+  value: string                       // E.164 for phones: +919876543210
+  opted_out: boolean
+  created_at: string
+}
+
+export interface AlertEvent {
+  id: number
+  school_id: string
+  type: AlertEventType
+  subject_id: string | null           // student_id, null for notices
+  occurred_at: string                 // ORIGINAL scan time, never sync time
+  payload: Record<string, unknown>
+  dedup_key: string | null
+  created_at: string
+}
+
+export interface MessageTemplate {
+  id: string
+  school_id: string
+  key: string                         // 'checkin' | 'checkout' | 'absent' | 'notice*'
+  body: string                        // "{{child}} entered {{school}} at {{time}}."
+  created_at: string
+}
+
+export interface ChannelTemplate {
+  id: string
+  school_id: string
+  message_template_id: string
+  channel: AlertChannel
+  category: TemplateCategory
+  provider_template_id: string | null // DLT template id / Meta template name
+  header: string | null               // DLT sender header
+  language: string | null
+  var_map: Record<string, string>     // {"1":"child","2":"school","3":"time"}
+  approval_status: ApprovalStatus
+  approved_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MessageOutbox {
+  id: number
+  school_id: string
+  event_id: number | null
+  channel_template_id: string
+  channel: AlertChannel
+  recipient: string
+  vars: Record<string, string>
+  status: OutboxStatus
+  attempts: number
+  next_attempt_at: string
+  provider_message_id: string | null
+  error_code: string | null
+  error_message: string | null
+  cost_estimate_paise: number
+  idempotency_key: string
+  triggered_by: 'scan' | 'cutoff' | 'composer' | 'test' | 'system'
+  sent_by_user_id: string | null
+  sent_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RateCard {
+  channel: AlertChannel
+  category: TemplateCategory
+  paise: number
+  gst_pct: number
+  effective_from: string
+}
+
+export interface SpendGuard {
+  school_id: string
+  daily_cap_paise: number
+  spent_today_paise: number
+  spent_date: string
+}
+
+// school_channels (credential vault) is service-role only and never
+// reaches the client. The UI-safe projection is fingerprint + health:
+export interface SchoolChannelSummary {
+  id: string
+  school_id: string
+  channel: AlertChannel
+  provider: ChannelProvider
+  health: ChannelHealth
+  last_verified_at: string | null
+  balance_hint_paise: number | null
+  secret_fingerprint_last6: string
+}
+
+export interface AbsentRun {
+  school_id: string
+  run_date: string
+  emitted_count: number
+  created_at: string
+}
+
+export interface AlertNotification {
+  id: number
+  school_id: string
+  kind: NotificationKind
+  severity: 'info' | 'warning' | 'error'
+  message: string
+  context: Record<string, unknown>
+  dedup_key: string | null
+  is_read: boolean
+  created_at: string
+}
+
+export interface ImportBatch {
+  id: string
+  school_id: string
+  uploaded_by: string | null
+  filename: string | null
+  status: ImportBatchStatus
+  summary: { new?: number; removed?: number; changed?: number; unchanged?: number; invalid?: number }
+  created_at: string
+  applied_at: string | null
+}
+
+export interface ImportRow {
+  id: number
+  batch_id: string
+  row_number: number
+  external_ref: string | null
+  student_name: string | null
+  class_label: string | null
+  guardian_name: string | null
+  guardian_phone: string | null
+  guardian_email: string | null
+  guardian2_phone: string | null
+  raw: Record<string, unknown>
+  validation_errors: string[]
+  action: ImportRowAction | null
+  created_at: string
+}
+
+// publish_notice() RPC result
+export interface PublishNoticeResult {
+  event_id: number
+  notice_id: string
+  queued: number
+}
+
+// estimate_notice_send() RPC row
+export interface NoticeEstimate {
+  recipient_count: number
+  est_cost_paise: number
+}
+
+// get_notice_delivery_stats() RPC row
+export interface NoticeDeliveryStats {
+  n_total: number
+  n_queued: number
+  n_sent: number
+  n_delivered: number
+  n_read: number
+  n_failed: number
+  n_dead: number
+  cost_paise: number
 }

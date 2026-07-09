@@ -2045,35 +2045,35 @@ NOTIFY pgrst, 'reload schema';
 -- ============================================================
 
 -- 1. New tables present:
--- SELECT table_name FROM information_schema.tables
--- WHERE table_schema = 'public' AND table_name IN
---   ('guardians','student_guardians','contact_methods','events',
---    'message_templates','channel_templates','message_outbox',
---    'rate_card','spend_guard','channel_rate_limits','school_channels',
---    'absent_runs','alert_notifications','import_batches','import_rows');
+ SELECT table_name FROM information_schema.tables
+WHERE table_schema = 'public' AND table_name IN
+('guardians','student_guardians','contact_methods','events',
+'message_templates','channel_templates','message_outbox',
+'rate_card','spend_guard','channel_rate_limits','school_channels',
+'absent_runs','alert_notifications','import_batches','import_rows');
 
 -- 2. schools alert columns:
--- SELECT column_name FROM information_schema.columns
--- WHERE table_name = 'schools' AND column_name IN
---   ('alerts_enabled','alerts_timezone','absent_cutoff_time',
---    'checkout_alerts_enabled','quiet_hours_start','quiet_hours_end',
---    'stale_alert_minutes');
+SELECT column_name FROM information_schema.columns
+ WHERE table_name = 'schools' AND column_name IN
+ ('alerts_enabled','alerts_timezone','absent_cutoff_time',
+ 'checkout_alerts_enabled','quiet_hours_start','quiet_hours_end',
+  'stale_alert_minutes');
 
 -- 3. Vault is unreachable from client roles (expect zero rows):
--- SELECT grantee, privilege_type FROM information_schema.role_table_grants
--- WHERE table_name = 'school_channels' AND grantee IN ('anon','authenticated');
+ SELECT grantee, privilege_type FROM information_schema.role_table_grants
+ WHERE table_name = 'school_channels' AND grantee IN ('anon','authenticated');
 
 -- 4. Outbox idempotency constraint:
--- SELECT conname FROM pg_constraint
--- WHERE conrelid = 'public.message_outbox'::regclass AND contype = 'u';
+ SELECT conname FROM pg_constraint
+ WHERE conrelid = 'public.message_outbox'::regclass AND contype = 'u';
 
 -- 5. Attendance trigger installed:
--- SELECT tgname FROM pg_trigger
--- WHERE tgrelid = 'public.attendance'::regclass AND tgname = 'attendance_emit_alert_event';
+ SELECT tgname FROM pg_trigger
+ WHERE tgrelid = 'public.attendance'::regclass AND tgname = 'attendance_emit_alert_event';
 
 -- 6. pg_cron jobs:
--- SELECT jobname, schedule FROM cron.job
--- WHERE jobname IN ('alerts-absent-cutoff','alerts-retention-purge');
+SELECT jobname, schedule FROM cron.job
+WHERE jobname IN ('alerts-absent-cutoff','alerts-retention-purge');
 
 -- ============================================================
 -- END OF MIGRATION chat21_alerts_byog_foundation

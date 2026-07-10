@@ -22,6 +22,7 @@ const ROLE_HOME: Record<string, string> = {
   collector: '/dashboard/fees',
   receptionist: '/dashboard/students',
   staff: '/dashboard/leave',
+  operator: '/dashboard/alerts',
 }
 
 // Allowed /dashboard route prefixes per restricted role. Roles not
@@ -37,6 +38,10 @@ const ROLE_ALLOW: Record<string, string[]> = {
   collector: ['/dashboard/fees', '/dashboard/leave'],
   receptionist: ['/dashboard/students', '/dashboard/classes', '/dashboard/leave'],
   staff: ['/dashboard/leave'],
+  // chat21: operator = front desk for the alerts product. The alerts
+  // settings page renders admin-only sections itself; credentials and
+  // template writes are enforced by the API route + RLS regardless.
+  operator: ['/dashboard/alerts', '/dashboard/students'],
 }
 
 function isAllowedPath(role: string, pathname: string): boolean {

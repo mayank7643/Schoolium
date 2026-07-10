@@ -2496,11 +2496,17 @@ EXCEPTION WHEN others THEN
 END;
 $$;
 
-SELECT cron.schedule(
-  'roll-exam-statuses',
-  '15 * * * *',
-  $$ SELECT public.roll_exam_statuses() $$
-);
+DO $do$
+BEGIN
+  PERFORM cron.schedule(
+    'roll-exam-statuses',
+    '15 * * * *',
+    $j$ SELECT public.roll_exam_statuses() $j$
+  );
+EXCEPTION WHEN others THEN
+  RAISE NOTICE 'pg_cron unavailable - schedule roll-exam-statuses manually (hourly)';
+END;
+$do$;
 
 
 -- ============================================================

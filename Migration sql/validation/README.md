@@ -23,8 +23,10 @@ psql -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO 
            GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;"
 
 # 3. Migration under test (run twice - second run proves idempotency)
-psql -v ON_ERROR_STOP=1 -f "Migration sql/chat21_exam_sessions_core.sql"
-psql -v ON_ERROR_STOP=1 -f "Migration sql/chat21_exam_sessions_core.sql"
+#    Exam-module migrations live in supabase/migrations/ (Supabase GitHub
+#    integration format); older chats remain in "Migration sql/" as archive.
+psql -v ON_ERROR_STOP=1 -f "supabase/migrations/20260708120000_exam_sessions_core.sql"
+psql -v ON_ERROR_STOP=1 -f "supabase/migrations/20260708120000_exam_sessions_core.sql"
 
 # 4. Smoke tests (self-contained, rolls itself back)
 psql -f "Migration sql/validation/chat21_smoke_tests.sql"

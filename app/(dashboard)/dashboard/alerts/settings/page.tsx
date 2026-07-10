@@ -16,7 +16,7 @@ import { createClient } from '@/utils/supabase/client'
 import Link from 'next/link'
 import {
   ArrowLeft, Save, Plus, Trash2, ShieldCheck, RefreshCw,
-  Send, Sparkles, AlertTriangle, CheckCircle2,
+  Send, Sparkles, AlertTriangle, CheckCircle2, Eye, EyeOff, Pencil,
 } from 'lucide-react'
 
 // ---- types -----------------------------------------------------------
@@ -50,6 +50,7 @@ interface GatewaySummary {
   id: string
   channel: string
   provider: string
+  config: Record<string, unknown>
   health: string
   last_verified_at: string | null
   balance_hint_paise: number | null
@@ -72,18 +73,55 @@ const PROVIDERS_BY_CHANNEL: Record<string, string[]> = {
   email: ['generic_http', 'fake'],
 }
 
-const SECRET_HINT: Record<string, string> = {
-  meta_cloud: 'JSON: {"access_token":"EAAG...","app_secret":"..."} - System User token + app secret',
-  msg91: 'Your MSG91 authkey',
-  generic_http: 'Whatever your gateway expects - available as {{secret}} in config',
-  fake: 'Anything (test provider - no real sends)',
+// Dedicated fields per provider so a school admin fills a form, not
+// a JSON blob. secret: masked with an eye toggle, NEVER echoed back
+// after save - paste a new value to overwrite. json: validated as
+// JSON before submit. Non-secret values live in config and prefill
+// when editing an existing gateway.
+interface GatewayField {
+  key: string
+  label: string
+  secret?: boolean
+  required?: boolean
+  json?: boolean
+  placeholder?: string
+  help?: string
 }
 
-const CONFIG_HINT: Record<string, string> = {
-  meta_cloud: '{"phone_number_id":"1234567890"}',
-  msg91: '{}',
-  generic_http: '{"url":"https://...","method":"POST","headers":{"Authorization":"Bearer {{secret}}"},"body":{"to":"{{recipient}}"},"message_id_path":"data.id"}',
-  fake: '{}',
+const GATEWAY_FIELDS: Record<string, GatewayField[]> = {
+  meta_cloud: [
+    { key: 'access_token', label: 'Permanent access token', secret: true, required: true, placeholder: 'EAAG…', help: 'System User token from Meta Business settings (never expires)' },
+    { key: 'app_secret', label: 'App secret', secret: true, required: true, help: 'From the Meta app dashboard - verifies delivery webhooks' },
+    { key: 'phone_number_id', label: 'Phone number ID', required: true, placeholder: '123456789012345' },
+    { key: 'waba_id', label: 'WhatsApp Business Account ID', placeholder: 'optional' },
+  ],
+  msg91: [
+    { key: 'authkey', label: 'MSG91 auth key', secret: true, required: true, placeholder: 'from MSG91 dashboard > API' },
+    { key: 'sender', label: 'Sender ID (DLT header)', placeholder: 'SCHOOL', help: '6-character DLT-registered header' },
+  ],
+  generic_http: [
+    { key: 'api_key', label: 'API key / token', secret: true, required: true, help: 'Available as {{secret}} inside headers and body below' },
+    { key: 'url', label: 'Send URL', required: true, placeholder: 'https://sms.example.com/send' },
+    { key: 'method', label: 'HTTP method', placeholder: 'POST' },
+    { key: 'headers', label: 'Headers (JSON)', json: true, placeholder: '{"Authorization":"Bearer {{secret}}"}' },
+    { key: 'body', label: 'Body template (JSON)', json: true, placeholder: '{"to":"{{recipient_no_plus}}","tpl":"{{template_id}}","v1":"{{var1}}"}' },
+    { key: 'message_id_path', label: 'Message-id path in reply', placeholder: 'data.id' },
+    { key: 'verify_url', label: 'Balance / verify URL', placeholder: 'optional' },
+  ],
+  fake: [
+    { key: 'token', label: 'Any test value', secret: true, required: true, placeholder: 'test (no real messages are sent)' },
+  ],
+}
+
+// The vault stores ONE secret per gateway; multi-part secrets (Meta)
+// are packed into a JSON string exactly as the adapter expects.
+function buildSecret(provider: string, v: Record<string, string>): string {
+  if (provider === 'meta_cloud') {
+    return JSON.stringify({ access_token: (v.access_token ?? '').trim(), app_secret: (v.app_secret ?? '').trim() })
+  }
+  if (provider === 'msg91') return (v.authkey ?? '').trim()
+  if (provider === 'generic_http') return (v.api_key ?? '').trim()
+  return (v.token ?? '').trim()
 }
 
 export default function AlertsSettingsPage() {
@@ -100,8 +138,8 @@ export default function AlertsSettingsPage() {
   // gateway form
   const [gwChannel, setGwChannel] = useState('whatsapp')
   const [gwProvider, setGwProvider] = useState('meta_cloud')
-  const [gwSecret, setGwSecret] = useState('')
-  const [gwConfig, setGwConfig] = useState('')
+  const [gwValues, setGwValues] = useState<Record<string, string>>({})
+  const [showSecret, setShowSecret] = useState<Record<string, boolean>>({})
   const [gwBusy, setGwBusy] = useState(false)
 
   // channel-template add form (per message template id)
@@ -165,6 +203,26 @@ export default function AlertsSettingsPage() {
   }, [])
 
   useEffect(() => { void load() }, [load])
+
+  // The gateway currently saved for the selected channel + provider.
+  const existingGw = gateways.find((g) => g.channel === gwChannel && g.provider === gwProvider) ?? null
+
+  // Switching channel/provider prefills the NON-secret fields from the
+  // saved config. Secret fields always start blank - they are never
+  // shown again; pasting a new value overwrites.
+  useEffect(() => {
+    const spec = GATEWAY_FIELDS[gwProvider] ?? []
+    const existing = gateways.find((g) => g.channel === gwChannel && g.provider === gwProvider)
+    const init: Record<string, string> = {}
+    for (const f of spec) {
+      if (f.secret) continue
+      const val = existing?.config?.[f.key]
+      if (val === undefined || val === null) continue
+      init[f.key] = typeof val === 'string' ? val : JSON.stringify(val)
+    }
+    setGwValues(init)
+    setShowSecret({})
+  }, [gwChannel, gwProvider, gateways])
 
   // ---- 1. pipeline switches ------------------------------------------
   async function saveSchool() {
@@ -254,20 +312,52 @@ export default function AlertsSettingsPage() {
 
   // ---- 3. gateways ------------------------------------------------------
   async function addGateway() {
-    setGwBusy(true)
-    let config: Record<string, unknown> = {}
-    if (gwConfig.trim()) {
-      try { config = JSON.parse(gwConfig) } catch { flash('err', 'Config must be valid JSON'); setGwBusy(false); return }
+    const spec = GATEWAY_FIELDS[gwProvider] ?? []
+    const secretSpec = spec.filter((f) => f.secret)
+    const filledSecrets = secretSpec.filter((f) => (gwValues[f.key] ?? '').trim())
+    const requiredSecrets = secretSpec.filter((f) => f.required)
+
+    // New gateway: every required field. Existing gateway: secrets may
+    // be left blank (= keep the saved credential, update the rest) but
+    // if any secret is pasted, all of them must be pasted together.
+    if (!existingGw && filledSecrets.length < requiredSecrets.length) {
+      flash('err', 'Fill in all credential fields'); return
     }
+    if (existingGw && filledSecrets.length > 0 && filledSecrets.length < requiredSecrets.length) {
+      flash('err', 'When replacing the credential, fill all secret fields together'); return
+    }
+
+    const config: Record<string, unknown> = {}
+    for (const f of spec) {
+      if (f.secret) continue
+      const raw = (gwValues[f.key] ?? '').trim()
+      if (f.required && !raw) { flash('err', `${f.label} is required`); return }
+      if (!raw) continue
+      if (f.json) {
+        try { config[f.key] = JSON.parse(raw) } catch { flash('err', `${f.label} must be valid JSON`); return }
+      } else {
+        config[f.key] = raw
+      }
+    }
+
+    const secret = filledSecrets.length ? buildSecret(gwProvider, gwValues) : ''
+
+    setGwBusy(true)
     const res = await fetch('/api/alerts/channels', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'upsert', channel: gwChannel, provider: gwProvider, config, secret: gwSecret }),
+      body: JSON.stringify({ action: 'upsert', channel: gwChannel, provider: gwProvider, config, secret }),
     })
     const body = await res.json().catch(() => ({ error: 'Server returned a non-JSON error' }))
     setGwBusy(false)
     if (!res.ok) { flash('err', body.error ?? 'Failed'); return }
-    flash('ok', `Credential stored. Health: ${body.channel.health}${body.detail ? ` — ${body.detail}` : ''}`)
-    setGwSecret(''); setGwConfig('')
+    flash('ok', `${secret ? 'Credential stored' : 'Settings updated'}. Health: ${body.channel.health}${body.detail ? ` — ${body.detail}` : ''}`)
+    // Wipe pasted secrets from the form; they are never shown again.
+    setGwValues((old) => {
+      const next = { ...old }
+      for (const f of secretSpec) delete next[f.key]
+      return next
+    })
+    setShowSecret({})
     void load()
   }
 
@@ -525,6 +615,12 @@ export default function AlertsSettingsPage() {
                   <button onClick={() => void verifyGateway(g.id)} className="btn-secondary !py-1 text-xs flex items-center gap-1">
                     <RefreshCw size={11} /> Verify
                   </button>
+                  <button
+                    onClick={() => { setGwChannel(g.channel); setGwProvider(g.provider) }}
+                    className="btn-secondary !py-1 text-xs flex items-center gap-1"
+                  >
+                    <Pencil size={11} /> Edit
+                  </button>
                   <button onClick={() => void deleteGateway(g.id)} className="text-slate-300 hover:text-red-500">
                     <Trash2 size={14} />
                   </button>
@@ -532,39 +628,91 @@ export default function AlertsSettingsPage() {
               </div>
             ))}
 
-            {/* add / rotate */}
-            <div className="mt-4 pt-4 border-t border-slate-100 grid sm:grid-cols-2 gap-3">
-              <div>
-                <label className="label">Channel</label>
-                <select className="input" value={gwChannel}
-                  onChange={(e) => { setGwChannel(e.target.value); setGwProvider(PROVIDERS_BY_CHANNEL[e.target.value][0]) }}>
-                  {['whatsapp', 'sms', 'email'].map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+            {/* add / edit / rotate */}
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="label">Channel</label>
+                  <select className="input" value={gwChannel}
+                    onChange={(e) => { setGwChannel(e.target.value); setGwProvider(PROVIDERS_BY_CHANNEL[e.target.value][0]) }}>
+                    {['whatsapp', 'sms', 'email'].map((c) => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Provider</label>
+                  <select className="input" value={gwProvider} onChange={(e) => setGwProvider(e.target.value)}>
+                    {(PROVIDERS_BY_CHANNEL[gwChannel] || []).map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="label">Provider</label>
-                <select className="input" value={gwProvider} onChange={(e) => setGwProvider(e.target.value)}>
-                  {(PROVIDERS_BY_CHANNEL[gwChannel] || []).map((p) => <option key={p} value={p}>{p}</option>)}
-                </select>
+
+              {existingGw && (
+                <p className="text-xs text-slate-500 bg-slate-50 rounded-lg px-3 py-2 mt-3">
+                  A credential is already saved for this gateway
+                  <span className="font-mono"> (…{existingGw.secret_fingerprint_last6})</span>.
+                  Secret fields stay hidden — leave them blank to keep it and just update the other
+                  fields, or paste new values to replace it.
+                </p>
+              )}
+
+              <div className="grid sm:grid-cols-2 gap-3 mt-3">
+                {(GATEWAY_FIELDS[gwProvider] ?? []).map((f) => (
+                  <div key={f.key} className={f.json ? 'sm:col-span-2' : ''}>
+                    <label className="label">
+                      {f.label}{f.required && !existingGw ? ' *' : ''}
+                    </label>
+                    {f.secret ? (
+                      <div className="relative">
+                        <input
+                          type={showSecret[f.key] ? 'text' : 'password'}
+                          className="input pr-10 font-mono text-xs"
+                          value={gwValues[f.key] ?? ''}
+                          onChange={(e) => setGwValues((o) => ({ ...o, [f.key]: e.target.value }))}
+                          placeholder={existingGw ? '•••••• saved — paste new value to replace' : f.placeholder}
+                          autoComplete="new-password"
+                          spellCheck={false}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowSecret((o) => ({ ...o, [f.key]: !o[f.key] }))}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                          aria-label={showSecret[f.key] ? 'Hide value' : 'Show value'}
+                          tabIndex={-1}
+                        >
+                          {showSecret[f.key] ? <EyeOff size={15} /> : <Eye size={15} />}
+                        </button>
+                      </div>
+                    ) : f.json ? (
+                      <textarea
+                        className="input font-mono text-xs" rows={2}
+                        value={gwValues[f.key] ?? ''}
+                        onChange={(e) => setGwValues((o) => ({ ...o, [f.key]: e.target.value }))}
+                        placeholder={f.placeholder}
+                        spellCheck={false}
+                      />
+                    ) : (
+                      <input
+                        className="input"
+                        value={gwValues[f.key] ?? ''}
+                        onChange={(e) => setGwValues((o) => ({ ...o, [f.key]: e.target.value }))}
+                        placeholder={f.placeholder}
+                        spellCheck={false}
+                      />
+                    )}
+                    {f.help && <p className="text-xs text-slate-400 mt-1">{f.help}</p>}
+                  </div>
+                ))}
               </div>
-              <div className="sm:col-span-2">
-                <label className="label">Credential (stored encrypted, shown never again)</label>
-                <textarea className="input font-mono text-xs" rows={2} value={gwSecret}
-                  onChange={(e) => setGwSecret(e.target.value)} placeholder={SECRET_HINT[gwProvider]} />
-              </div>
-              <div className="sm:col-span-2">
-                <label className="label">Config (non-secret JSON)</label>
-                <textarea className="input font-mono text-xs" rows={2} value={gwConfig}
-                  onChange={(e) => setGwConfig(e.target.value)} placeholder={CONFIG_HINT[gwProvider]} />
-              </div>
-              <div className="sm:col-span-2">
-                <button onClick={() => void addGateway()} disabled={gwBusy || !gwSecret.trim()}
+
+              <div className="mt-4">
+                <button onClick={() => void addGateway()} disabled={gwBusy}
                   className="btn-primary flex items-center gap-1.5 disabled:opacity-50">
-                  <ShieldCheck size={14} /> {gwBusy ? 'Verifying…' : 'Verify & store credential'}
+                  <ShieldCheck size={14} />
+                  {gwBusy ? 'Verifying…' : existingGw ? 'Verify & update gateway' : 'Verify & save gateway'}
                 </button>
                 <p className="text-xs text-slate-400 mt-2">
-                  Re-submitting the same channel + provider rotates the credential: it is re-verified before
-                  it replaces the old one.
+                  The connection is verified with the provider BEFORE anything is stored. Secrets are
+                  encrypted at rest and never displayed again.
                 </p>
               </div>
             </div>

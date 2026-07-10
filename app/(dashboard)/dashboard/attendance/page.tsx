@@ -139,6 +139,10 @@ export default function AttendancePage() {
             className="btn-secondary flex items-center gap-2 text-sm">
             <Printer size={15} /> Print ID Cards
           </Link>
+          <Link href="/dashboard/attendance/qr-stickers"
+            className="btn-secondary flex items-center gap-2 text-sm">
+            <QrCode size={15} /> QR Stickers
+          </Link>
         </div>
       </div>
 

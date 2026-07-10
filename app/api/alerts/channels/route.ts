@@ -193,18 +193,62 @@ export async function POST(req: Request) {
   const provider = body.provider as (typeof PROVIDERS)[number] | undefined
   if (!channel || !CHANNELS.includes(channel)) return bad('channel must be sms | whatsapp | email')
   if (!provider || !PROVIDERS.includes(provider)) return bad('unknown provider')
-  if (!body.secret || typeof body.secret !== 'string' || !body.secret.trim()) {
-    return bad('secret is required')
-  }
   const adapter = getAdapter(provider)
   if (!adapter) return bad(`Provider '${provider}' is not implemented yet`)
 
   const config: Json = body.config && typeof body.config === 'object' ? body.config : {}
+  const newSecret = typeof body.secret === 'string' ? body.secret.trim() : ''
+
+  // Empty secret + existing row = config-only update: the admin edits
+  // sender id / phone number id without re-pasting the credential.
+  // The stored secret stays encrypted; we only decrypt to re-verify.
+  if (!newSecret) {
+    const { data: existing } = await db
+      .from('school_channels')
+      .select('id, secret_ciphertext, secret_iv, secret_tag')
+      .eq('school_id', auth.schoolId)
+      .eq('channel', channel)
+      .eq('provider', provider)
+      .maybeSingle()
+    const row = existing as Pick<VaultRow, 'id' | 'secret_ciphertext' | 'secret_iv' | 'secret_tag'> | null
+    if (!row) return bad('secret is required for a new gateway')
+
+    let stored: string
+    try {
+      stored = decryptSecret({
+        ciphertext: byteaToBuffer(row.secret_ciphertext),
+        iv: byteaToBuffer(row.secret_iv),
+        tag: byteaToBuffer(row.secret_tag),
+      })
+    } catch {
+      return bad('Stored credential could not be decrypted; paste it again', 500)
+    }
+
+    const health = await adapter.verify({ secret: stored, config })
+    const { data: updated, error } = await db
+      .from('school_channels')
+      .update({
+        config,
+        health: health.health,
+        last_verified_at: new Date().toISOString(),
+        balance_hint_paise: health.balanceHintPaise ?? null,
+      })
+      .eq('id', row.id)
+      .select('id, school_id, channel, provider, config, secret_ciphertext, secret_iv, secret_tag, secret_fingerprint, health, last_verified_at, balance_hint_paise')
+      .single()
+    if (error) return bad(error.message, 500)
+
+    return NextResponse.json({
+      ok: true,
+      channel: summarize(updated as VaultRow),
+      detail: health.detail ?? null,
+    })
+  }
 
   // Verify BEFORE storing (rotate flow: re-verify before switching over).
-  const health = await adapter.verify({ secret: body.secret, config })
+  const health = await adapter.verify({ secret: newSecret, config })
 
-  const enc = encryptSecret(body.secret)
+  const enc = encryptSecret(newSecret)
   const { data: upserted, error } = await db
     .from('school_channels')
     .upsert(

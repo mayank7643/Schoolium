@@ -81,6 +81,7 @@ function QRCardModal({
   const [qrReady, setQrReady] = useState(false)
   const [qrMm, setQrMm] = useState(25)
   const [showCaption, setShowCaption] = useState(false)
+  const [cutGuide, setCutGuide] = useState(true)
 
   useEffect(() => {
     async function generateQR() {
@@ -125,7 +126,8 @@ function QRCardModal({
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif;
         -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     body { background: #fff; }
-    .sticker { display: inline-flex; flex-direction: column; align-items: center; }
+    .sticker { display: inline-flex; flex-direction: column; align-items: center; padding: 1mm;
+               ${cutGuide ? 'outline: 0.5pt dashed #94a3b8;' : ''} }
     .qr { width: ${qrMm}mm; height: ${qrMm}mm; display: block; }
     .nm { font-size: ${qrMm >= 30 ? 7 : 6}pt; font-weight: bold; color: #0f172a; margin-top: 0.8mm;
           max-width: ${qrMm + 4}mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
@@ -168,25 +170,27 @@ function QRCardModal({
         </div>
 
         {/* QR preview — this is all that prints */}
-        <div className="flex flex-col items-center gap-1 border border-slate-100 rounded-xl py-5 mb-4">
-          <canvas ref={canvasRef} className="rounded-lg" />
-          {!qrReady && (
-            <div className="w-[200px] h-[200px] bg-slate-100 rounded-lg flex items-center justify-center">
-              <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-            </div>
-          )}
-          {showCaption && (
-            <>
-              <p className="text-xs font-semibold text-slate-800 mt-1">{student.full_name}</p>
-              <p className="text-[10px] text-slate-500">
-                {[student.student_uid,
-                  student.classes
-                    ? `${student.classes.name}${student.classes.section ? '-' + student.classes.section : ''}`
-                    : null,
-                ].filter(Boolean).join(' · ')}
-              </p>
-            </>
-          )}
+        <div className="flex items-center justify-center border border-slate-100 rounded-xl py-5 mb-4">
+          <div className={`flex flex-col items-center gap-1 p-1.5 ${cutGuide ? 'outline-dashed outline-1 outline-slate-400' : ''}`}>
+            <canvas ref={canvasRef} className="rounded-lg" />
+            {!qrReady && (
+              <div className="w-[200px] h-[200px] bg-slate-100 rounded-lg flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+              </div>
+            )}
+            {showCaption && (
+              <>
+                <p className="text-xs font-semibold text-slate-800 mt-1">{student.full_name}</p>
+                <p className="text-[10px] text-slate-500">
+                  {[student.student_uid,
+                    student.classes
+                      ? `${student.classes.name}${student.classes.section ? '-' + student.classes.section : ''}`
+                      : null,
+                  ].filter(Boolean).join(' · ')}
+                </p>
+              </>
+            )}
+          </div>
         </div>
 
         {/* Size + caption controls */}
@@ -212,13 +216,22 @@ function QRCardModal({
             />
             <span className="text-xs font-mono text-slate-600 w-10">{qrMm}mm</span>
           </div>
-          <label className="flex items-center justify-center gap-1.5 cursor-pointer text-xs text-slate-600">
-            <input
-              type="checkbox" className="w-3.5 h-3.5 accent-brand-600"
-              checked={showCaption} onChange={e => setShowCaption(e.target.checked)}
-            />
-            Print name &amp; ID under the code
-          </label>
+          <div className="flex items-center justify-center gap-4">
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-600">
+              <input
+                type="checkbox" className="w-3.5 h-3.5 accent-brand-600"
+                checked={showCaption} onChange={e => setShowCaption(e.target.checked)}
+              />
+              Name &amp; ID caption
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-600">
+              <input
+                type="checkbox" className="w-3.5 h-3.5 accent-brand-600"
+                checked={cutGuide} onChange={e => setCutGuide(e.target.checked)}
+              />
+              Cut guide border
+            </label>
+          </div>
         </div>
 
         <button

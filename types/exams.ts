@@ -169,6 +169,16 @@ export interface ExamAuditLog {
   created_at: string
 }
 
+export interface Holiday {
+  id: string
+  school_id: string
+  session_id: string
+  holiday_date: string
+  name: string
+  created_by: string | null
+  created_at: string
+}
+
 // ── RPC payloads / results (match RETURNS exactly) ──────────────
 
 export interface TimetableIssue {
@@ -193,6 +203,11 @@ export interface GenerateEnrollmentsResult {
 
 export interface UpsertExamSubjectsResult {
   saved: number
+}
+
+export interface AutoGenerateTimetableResult {
+  scheduled: number
+  unscheduled: number
 }
 
 // Row shape accepted by upsert_exam_subjects (draft mode sends all

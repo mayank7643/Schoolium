@@ -9,9 +9,9 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { ArrowLeft, Plus, Trash2, Copy, X, ShieldCheck, AlertTriangle, Info } from 'lucide-react'
-import type { Exam, ExamSubject, ExamRoom, Class, Subject, TimetableIssue, ExamSubjectRowInput } from '@/types'
-import { ExamStatusBadge, classLabel } from '@/components/exams/examUi'
+import { ArrowLeft, Plus, Trash2, Copy, X, ShieldCheck, AlertTriangle, Info, Wand2, CalendarDays } from 'lucide-react'
+import type { Exam, ExamSubject, ExamRoom, Class, Subject, TimetableIssue, ExamSubjectRowInput, AutoGenerateTimetableResult } from '@/types'
+import { ExamStatusBadge, classLabel, formatDate, formatTime } from '@/components/exams/examUi'
 
 interface PaperRow {
   key: string               // stable local key
@@ -61,6 +61,13 @@ export default function ConfigureExamPage() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+
+  const [showAutoGen, setShowAutoGen] = useState(false)
+  const [autoGenForm, setAutoGenForm] = useState({
+    start_date: '', end_date: '', gap_days: 0,
+    default_start: '10:00', default_duration: 180,
+    overwrite: false, skip_sundays: true,
+  })
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient()
@@ -234,6 +241,38 @@ export default function ConfigureExamPage() {
     setIssues((data ?? []) as TimetableIssue[])
   }
 
+  function openAutoGen() {
+    const today = new Date()
+    const start = new Date(today); start.setDate(start.getDate() + 7)
+    const end = new Date(today); end.setDate(end.getDate() + 28)
+    const iso = (d: Date) => d.toISOString().slice(0, 10)
+    setAutoGenForm(f => ({ ...f, start_date: iso(start), end_date: iso(end) }))
+    setShowAutoGen(true)
+  }
+
+  async function runAutoGen(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true); setError(''); setNotice('')
+    const supabase = createClient()
+    const { data, error } = await supabase.rpc('auto_generate_timetable', {
+      p_exam_id: examId,
+      p_start_date: autoGenForm.start_date,
+      p_end_date: autoGenForm.end_date,
+      p_gap_days: autoGenForm.gap_days,
+      p_default_start: autoGenForm.default_start,
+      p_default_duration: autoGenForm.default_duration,
+      p_overwrite: autoGenForm.overwrite,
+      p_skip_sundays: autoGenForm.skip_sundays,
+    })
+    setBusy(false)
+    if (error) { setError(error.message); return }
+    const r = data as AutoGenerateTimetableResult
+    setShowAutoGen(false)
+    setNotice(`Timetable generated — ${r.scheduled} paper(s) scheduled${r.unscheduled > 0 ? `, ${r.unscheduled} did not fit the window` : ''}. Review below, adjust manually if needed, then validate.`)
+    await fetchAll()
+    await runValidation()
+  }
+
   if (loading || !exam) {
     return <div className="max-w-5xl mx-auto"><div className="card h-96 animate-pulse bg-slate-50" /></div>
   }
@@ -260,9 +299,14 @@ export default function ConfigureExamPage() {
           </p>
         </div>
         {editable && (
-          <button onClick={runValidation} disabled={busy} className="btn-secondary text-sm flex items-center gap-1.5">
-            <ShieldCheck size={15} /> Validate timetable
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={openAutoGen} disabled={busy} className="btn-secondary text-sm flex items-center gap-1.5">
+              <Wand2 size={15} /> Auto-generate
+            </button>
+            <button onClick={runValidation} disabled={busy} className="btn-secondary text-sm flex items-center gap-1.5">
+              <ShieldCheck size={15} /> Validate timetable
+            </button>
+          </div>
         )}
       </div>
 
@@ -296,6 +340,41 @@ export default function ConfigureExamPage() {
               ))}
             </ul>
           )}
+        </div>
+      )}
+
+      {/* Schedule by day */}
+      {papers.some(p => p.exam_date) && (
+        <div className="card p-5 mb-4">
+          <h3 className="font-semibold text-slate-900 text-sm mb-3 flex items-center gap-2">
+            <CalendarDays size={15} className="text-brand-600" /> Exam calendar
+          </h3>
+          <div className="flex flex-col gap-2">
+            {Object.entries(
+              papers.filter(p => p.exam_date && !p.is_cancelled).reduce<Record<string, PaperRow[]>>((acc, p) => {
+                (acc[p.exam_date] = acc[p.exam_date] ?? []).push(p)
+                return acc
+              }, {})
+            ).sort(([a], [b]) => a.localeCompare(b)).map(([date, rows]) => (
+              <div key={date} className="flex items-start gap-3">
+                <span className="text-xs font-semibold text-slate-600 w-24 shrink-0 pt-1">{formatDate(date)}</span>
+                <div className="flex flex-wrap gap-1.5">
+                  {rows
+                    .sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''))
+                    .map(p => (
+                      <span key={p.key} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 text-xs text-slate-600">
+                        <span className="font-medium text-slate-800">
+                          {classLabel(classes.find(c => c.id === p.class_id))}
+                        </span>
+                        {subjects.find(s => s.id === p.subject_id)?.name ?? '—'}
+                        {p.start_time && <span className="text-slate-400">· {formatTime(p.start_time)}</span>}
+                        {p.room_id && <span className="text-slate-400">· {rooms.find(r => r.id === p.room_id)?.name}</span>}
+                      </span>
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -461,6 +540,72 @@ export default function ConfigureExamPage() {
             </div>
           )}
         </>
+      )}
+
+      {/* Auto-generate modal */}
+      {showAutoGen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+            <div className="flex items-center justify-between p-5 border-b border-slate-100">
+              <h2 className="font-semibold text-slate-900 flex items-center gap-2">
+                <Wand2 size={16} className="text-brand-600" /> Auto-generate timetable
+              </h2>
+              <button onClick={() => setShowAutoGen(false)} className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100">
+                <X size={18} className="text-slate-500" />
+              </button>
+            </div>
+            <form onSubmit={runAutoGen} className="p-5 flex flex-col gap-4">
+              <p className="text-xs text-slate-500 -mb-1">
+                Fills dates for unscheduled papers: one paper per class per day, skipping
+                holidays{autoGenForm.skip_sundays ? ' and Sundays' : ''}. Manual edits stay
+                unless you overwrite.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="label">From *</label>
+                  <input type="date" className="input" required value={autoGenForm.start_date}
+                    onChange={e => setAutoGenForm({ ...autoGenForm, start_date: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">To *</label>
+                  <input type="date" className="input" required value={autoGenForm.end_date}
+                    onChange={e => setAutoGenForm({ ...autoGenForm, end_date: e.target.value })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <label className="label">Gap days</label>
+                  <input type="number" min={0} max={30} className="input" value={autoGenForm.gap_days}
+                    onChange={e => setAutoGenForm({ ...autoGenForm, gap_days: Number(e.target.value) })} />
+                </div>
+                <div>
+                  <label className="label">Start time</label>
+                  <input type="time" className="input" value={autoGenForm.default_start}
+                    onChange={e => setAutoGenForm({ ...autoGenForm, default_start: e.target.value })} />
+                </div>
+                <div>
+                  <label className="label">Minutes</label>
+                  <input type="number" min={1} className="input" value={autoGenForm.default_duration}
+                    onChange={e => setAutoGenForm({ ...autoGenForm, default_duration: Number(e.target.value) })} />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked={autoGenForm.skip_sundays}
+                  onChange={e => setAutoGenForm({ ...autoGenForm, skip_sundays: e.target.checked })} />
+                Skip Sundays
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked={autoGenForm.overwrite}
+                  onChange={e => setAutoGenForm({ ...autoGenForm, overwrite: e.target.checked })} />
+                Overwrite existing dates and times
+              </label>
+              {error && <div className="bg-red-50 text-red-600 text-sm px-3 py-2 rounded-lg">{error}</div>}
+              <button type="submit" className="btn-primary w-full py-2.5" disabled={busy}>
+                {busy ? 'Generating…' : 'Generate timetable'}
+              </button>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -30,6 +30,10 @@ psql -v ON_ERROR_STOP=1 -f "supabase/migrations/20260708120000_exam_sessions_cor
 
 # 4. Smoke tests (self-contained, rolls itself back)
 psql -f "Migration sql/validation/chat21_smoke_tests.sql"
+
+# 5. Phase 2 (exam_logistics): apply + smoke
+psql -v ON_ERROR_STOP=1 -f "supabase/migrations/20260711090000_exam_logistics.sql"
+psql -f "Migration sql/validation/exam_logistics_smoke_tests.sql"
 ```
 
 Every `T*` line must print its expected value and every `DO` block must print

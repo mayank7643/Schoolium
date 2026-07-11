@@ -11,7 +11,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import {
   ArrowLeft, Settings2, Users, ShieldCheck, AlertTriangle, ChevronRight,
-  Send, Play, Flag, Lock, LockOpen, Ban, Trash2, X, CheckCircle2, Circle, Contact,
+  Send, Play, Flag, Lock, LockOpen, Ban, Trash2, X, CheckCircle2, Circle, Contact, FileText,
 } from 'lucide-react'
 import type { Exam, TimetableIssue, PublishExamResult } from '@/types'
 import { ExamStatusBadge, formatDate } from '@/components/exams/examUi'
@@ -160,6 +160,11 @@ export default function ExamCockpitPage() {
           {(st === 'published' || st === 'ongoing') && (
             <Link href={`/dashboard/exams/${examId}/admit-cards`} className="btn-secondary text-sm flex items-center gap-1.5">
               <Contact size={15} /> Admit cards
+            </Link>
+          )}
+          {counts.papers > 0 && st !== 'cancelled' && (
+            <Link href={`/dashboard/exams/${examId}/question-papers`} className="btn-secondary text-sm flex items-center gap-1.5">
+              <FileText size={15} /> Question papers
             </Link>
           )}
         </div>

@@ -212,7 +212,53 @@ export interface AdmitCard {
   exam_enrollments?: ExamEnrollment
 }
 
+export type QuestionPaperStatus = 'draft' | 'final'
+export type QpAccessAction = 'upload' | 'download' | 'lock' | 'unlock'
+
+export interface QuestionPaper {
+  id: string
+  school_id: string
+  exam_subject_id: string
+  status: QuestionPaperStatus
+  current_version_id: string | null
+  locked_by: string | null
+  locked_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface QuestionPaperVersion {
+  id: string
+  school_id: string
+  question_paper_id: string
+  version_no: number
+  file_path: string
+  file_size: number | null
+  note: string | null
+  uploaded_by: string | null
+  created_at: string
+}
+
+export interface QuestionPaperAccessLog {
+  id: string
+  school_id: string
+  question_paper_id: string
+  version_id: string | null
+  profile_id: string | null
+  action: QpAccessAction
+  created_at: string
+  // joined
+  profiles?: { full_name: string } | null
+}
+
 // ── RPC payloads / results (match RETURNS exactly) ──────────────
+
+export interface RegisterQpUploadResult {
+  question_paper_id: string
+  version_id: string
+  version_no: number
+  file_path: string
+}
 
 export interface GenerateAdmitCardsResult {
   generated: number

@@ -140,6 +140,9 @@ export default function Sidebar({ profile }: SidebarProps) {
           {profile?.role === 'teacher' && (
             <NavLink href="/dashboard/my-classes" icon={BookOpen} label="My Classes" />
           )}
+          {profile?.role === 'teacher' && (
+            <NavLink href="/dashboard/my-exams" icon={GraduationCap} label="My Exams" />
+          )}
           {profile?.role === 'receptionist' && (
             <NavLink href="/dashboard/exams/print-admit-cards" icon={Printer} label="Admit Cards" />
           )}
@@ -219,7 +222,8 @@ export default function Sidebar({ profile }: SidebarProps) {
         {[
           ...visibleNavFor(profile?.role),
           ...(profile?.role === 'teacher'
-            ? [{ label: 'My Classes', href: '/dashboard/my-classes', icon: BookOpen }]
+            ? [{ label: 'My Classes', href: '/dashboard/my-classes', icon: BookOpen },
+               { label: 'My Exams', href: '/dashboard/my-exams', icon: GraduationCap }]
             : []),
           ...(profile?.role === 'receptionist'
             ? [{ label: 'Admit Cards', href: '/dashboard/exams/print-admit-cards', icon: Printer }]

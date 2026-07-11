@@ -179,7 +179,57 @@ export interface Holiday {
   created_at: string
 }
 
+export type AdmitCardLayout = 'single' | 'two_per_a4' | 'three_per_a4' | 'four_per_a4'
+
+export interface AdmitCardTemplate {
+  id: string
+  school_id: string
+  name: string
+  layout: AdmitCardLayout
+  instructions: string | null
+  principal_signature_path: string | null
+  show_photo: boolean
+  show_qr: boolean
+  show_seat: boolean
+  is_default: boolean
+  created_at: string
+}
+
+export interface AdmitCard {
+  id: string
+  school_id: string
+  exam_id: string
+  enrollment_id: string
+  template_id: string | null
+  qr_token: string
+  is_revoked: boolean
+  revoke_reason: string | null
+  print_count: number
+  last_printed_at: string | null
+  generated_by: string | null
+  created_at: string
+  // joined
+  exam_enrollments?: ExamEnrollment
+}
+
 // ── RPC payloads / results (match RETURNS exactly) ──────────────
+
+export interface GenerateAdmitCardsResult {
+  generated: number
+  total_live: number
+}
+
+export interface VerifyAdmitCardResult {
+  valid: boolean
+  reason?: 'not_found' | 'revoked' | 'exempted' | 'withdrawn' | 'transferred'
+  student_name?: string
+  photo_url?: string | null
+  roll_number?: number
+  seat_number?: string | null
+  class_label?: string
+  exam_name?: string
+  exam_status?: ExamStatus
+}
 
 export interface TimetableIssue {
   severity: IssueSeverity

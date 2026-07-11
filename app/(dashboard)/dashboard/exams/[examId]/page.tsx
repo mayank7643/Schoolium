@@ -11,7 +11,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import {
   ArrowLeft, Settings2, Users, ShieldCheck, AlertTriangle, ChevronRight,
-  Send, Play, Flag, Lock, LockOpen, Ban, Trash2, X, CheckCircle2, Circle,
+  Send, Play, Flag, Lock, LockOpen, Ban, Trash2, X, CheckCircle2, Circle, Contact,
 } from 'lucide-react'
 import type { Exam, TimetableIssue, PublishExamResult } from '@/types'
 import { ExamStatusBadge, formatDate } from '@/components/exams/examUi'
@@ -21,6 +21,7 @@ interface Counts {
   papers: number
   unscheduled: number
   enrollments: number
+  admitCards: number
 }
 
 export default function ExamCockpitPage() {
@@ -28,7 +29,7 @@ export default function ExamCockpitPage() {
   const router = useRouter()
 
   const [exam, setExam] = useState<Exam | null>(null)
-  const [counts, setCounts] = useState<Counts>({ classes: 0, papers: 0, unscheduled: 0, enrollments: 0 })
+  const [counts, setCounts] = useState<Counts>({ classes: 0, papers: 0, unscheduled: 0, enrollments: 0, admitCards: 0 })
   const [issues, setIssues] = useState<TimetableIssue[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -37,11 +38,12 @@ export default function ExamCockpitPage() {
 
   const fetchAll = useCallback(async () => {
     const supabase = createClient()
-    const [eRes, ecRes, esRes, enRes] = await Promise.all([
+    const [eRes, ecRes, esRes, enRes, acRes] = await Promise.all([
       supabase.from('exams').select('*, exam_types(name, code, category), academic_terms(name), academic_sessions(name)').eq('id', examId).single(),
       supabase.from('exam_classes').select('id', { count: 'exact', head: true }).eq('exam_id', examId),
       supabase.from('exam_subjects').select('id, exam_date, start_time, duration_minutes, is_cancelled').eq('exam_id', examId),
       supabase.from('exam_enrollments').select('id', { count: 'exact', head: true }).eq('exam_id', examId),
+      supabase.from('admit_cards').select('id', { count: 'exact', head: true }).eq('exam_id', examId).eq('is_revoked', false),
     ])
     if (eRes.error || !eRes.data) { router.push('/dashboard/exams'); return }
     setExam(eRes.data as Exam)
@@ -52,6 +54,7 @@ export default function ExamCockpitPage() {
       papers: live.length,
       unscheduled: live.filter(p => !p.exam_date || !p.start_time || !p.duration_minutes).length,
       enrollments: enRes.count ?? 0,
+      admitCards: acRes.count ?? 0,
     })
     setLoading(false)
   }, [examId, router])
@@ -111,6 +114,13 @@ export default function ExamCockpitPage() {
       detail: counts.enrollments > 0 ? `${counts.enrollments} student(s) enrolled` : 'Enrollments are generated on publish',
       href: counts.enrollments > 0 ? `/dashboard/exams/${examId}/enrollments` : undefined,
     },
+    {
+      label: 'Admit cards generated', done: counts.admitCards > 0 && counts.admitCards >= counts.enrollments - 0,
+      detail: counts.admitCards > 0
+        ? `${counts.admitCards} card(s) live`
+        : counts.enrollments > 0 ? 'Generate once the timetable is final' : 'Available after publish',
+      href: counts.enrollments > 0 ? `/dashboard/exams/${examId}/admit-cards` : undefined,
+    },
   ]
 
   return (
@@ -145,6 +155,11 @@ export default function ExamCockpitPage() {
           {counts.enrollments > 0 && (
             <Link href={`/dashboard/exams/${examId}/enrollments`} className="btn-secondary text-sm flex items-center gap-1.5">
               <Users size={15} /> Enrollments
+            </Link>
+          )}
+          {(st === 'published' || st === 'ongoing') && (
+            <Link href={`/dashboard/exams/${examId}/admit-cards`} className="btn-secondary text-sm flex items-center gap-1.5">
+              <Contact size={15} /> Admit cards
             </Link>
           )}
         </div>

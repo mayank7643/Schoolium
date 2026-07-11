@@ -17,6 +17,7 @@ import {
   ClipboardList,
   LogOut,
   Megaphone,
+  Printer,
   School,
   Settings,
   X,
@@ -139,6 +140,9 @@ export default function Sidebar({ profile }: SidebarProps) {
           {profile?.role === 'teacher' && (
             <NavLink href="/dashboard/my-classes" icon={BookOpen} label="My Classes" />
           )}
+          {profile?.role === 'receptionist' && (
+            <NavLink href="/dashboard/exams/print-admit-cards" icon={Printer} label="Admit Cards" />
+          )}
           {LEAVE_ROLES.includes(profile?.role ?? '') && (
             <NavLink href="/dashboard/leave" icon={ClipboardList} label="My Leave" />
           )}
@@ -216,6 +220,9 @@ export default function Sidebar({ profile }: SidebarProps) {
           ...visibleNavFor(profile?.role),
           ...(profile?.role === 'teacher'
             ? [{ label: 'My Classes', href: '/dashboard/my-classes', icon: BookOpen }]
+            : []),
+          ...(profile?.role === 'receptionist'
+            ? [{ label: 'Admit Cards', href: '/dashboard/exams/print-admit-cards', icon: Printer }]
             : []),
           ...(LEAVE_ROLES.includes(profile?.role ?? '')
             ? [{ label: 'My Leave', href: '/dashboard/leave', icon: ClipboardList }]

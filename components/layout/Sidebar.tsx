@@ -16,6 +16,7 @@ import {
   Briefcase,
   ClipboardList,
   LogOut,
+  Megaphone,
   School,
   Settings,
   X,
@@ -30,14 +31,17 @@ const navItems = [
   { label: 'Classes',    href: '/dashboard/classes',    icon: BookOpen        },
   { label: 'Attendance', href: '/dashboard/attendance', icon: CalendarCheck   },
   { label: 'Exams',      href: '/dashboard/exams',      icon: GraduationCap   },
+  { label: 'Alerts',     href: '/dashboard/alerts',     icon: Megaphone       },
 ]
 
 // chat17 Module 7 - which core nav items each role sees. Must stay in
 // sync with the middleware route map (middleware.ts): the sidebar hides
 // what the middleware blocks. Roles not listed (school_admin,
-// super_admin) see everything.
+// super_admin) see everything. chat21: operator (front desk for the
+// alerts product) gets Alerts + Students; principal sees Alerts too.
 const ROLE_NAV: Record<string, string[]> = {
-  principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance', '/dashboard/exams'],
+  principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance', '/dashboard/exams', '/dashboard/alerts'],
+  operator:     ['/dashboard/alerts', '/dashboard/students'],
   teacher:      ['/dashboard'],
   collector:    ['/dashboard/fees'],
   receptionist: ['/dashboard/students', '/dashboard/classes'],

@@ -66,18 +66,22 @@ function formatAadhaar(value: string): string {
   return digits.replace(/(\d{4})(?=\d)/g, '$1 ').trim()
 }
 
-// ── QR Card Modal ─────────────────────────────────────────────
+// ── Print QR Modal ────────────────────────────────────────────
+// Prints ONLY the QR code (schools stick it on their own ID cards).
+// Size presets match the bulk QR-sticker page; the optional caption
+// is off by default so the output is just the code.
 function QRCardModal({
   student,
-  schoolName,
   onClose,
 }: {
   student: StudentData
-  schoolName: string
   onClose: () => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [qrReady, setQrReady] = useState(false)
+  const [qrMm, setQrMm] = useState(25)
+  const [showCaption, setShowCaption] = useState(false)
+  const [cutGuide, setCutGuide] = useState(true)
 
   useEffect(() => {
     async function generateQR() {
@@ -103,82 +107,40 @@ function QRCardModal({
     const canvas = canvasRef.current
     if (!canvas) return
     const qrDataUrl = canvas.toDataURL('image/png')
+    const esc = (s: string) =>
+      s.replace(/[&<>"']/g, c => (({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string))
     const className = student.classes
-      ? `${student.classes.name}${student.classes.section ? ' - ' + student.classes.section : ''}`
+      ? `${student.classes.name}${student.classes.section ? '-' + student.classes.section : ''}`
       : ''
+    const subParts = [student.student_uid, className].filter(Boolean).map(v => esc(v as string))
 
+    // QR only — top-left of the sheet so a small sticker sheet or a
+    // label printer wastes nothing.
     const html = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>ID Card – ${student.full_name}</title>
+  <title>QR – ${esc(student.full_name)}</title>
   <style>
-    @page { size: 54mm 85mm; margin: 0; }
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Arial', sans-serif; }
-    body { width: 54mm; height: 85mm; background: #fff; }
-    .card {
-      width: 54mm; height: 85mm;
-      display: flex; flex-direction: column;
-      border: 1.5px solid #1d4ed8; border-radius: 8px; overflow: hidden;
-    }
-    .header {
-      background: #1d4ed8; color: white;
-      padding: 6px 8px; text-align: center;
-    }
-    .school-name { font-size: 8px; font-weight: bold; letter-spacing: 0.3px; }
-    .subtitle { font-size: 6px; opacity: 0.85; margin-top: 1px; }
-    .body { flex: 1; display: flex; flex-direction: column; align-items: center; padding: 8px 8px 6px; gap: 5px; }
-    .avatar {
-      width: 36px; height: 36px; border-radius: 50%;
-      background: #dbeafe; display: flex; align-items: center; justify-content: center;
-      font-size: 16px; font-weight: bold; color: #1d4ed8; flex-shrink: 0;
-    }
-    .name { font-size: 9px; font-weight: bold; color: #0f172a; text-align: center; line-height: 1.2; }
-    .class { font-size: 7px; color: #64748b; text-align: center; }
-    .uid {
-      font-family: monospace; font-size: 7px; font-weight: bold;
-      background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
-      padding: 2px 6px; border-radius: 4px;
-    }
-    .qr-box { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-    .qr-img { width: 64px; height: 64px; }
-    .scan-label { font-size: 5.5px; color: #94a3b8; text-align: center; }
-    .footer {
-      background: #f8fafc; border-top: 1px solid #e2e8f0;
-      padding: 4px 8px; display: flex; justify-content: space-between;
-      align-items: center;
-    }
-    .footer-label { font-size: 5.5px; color: #94a3b8; }
-    .footer-value { font-size: 6px; color: #475569; font-weight: 500; }
+    @page { size: A4 portrait; margin: 10mm; }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif;
+        -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body { background: #fff; }
+    .sticker { display: inline-flex; flex-direction: column; align-items: center; padding: 1mm;
+               ${cutGuide ? 'outline: 0.5pt dashed #94a3b8;' : ''} }
+    .qr { width: ${qrMm}mm; height: ${qrMm}mm; display: block; }
+    .nm { font-size: ${qrMm >= 30 ? 7 : 6}pt; font-weight: bold; color: #0f172a; margin-top: 0.8mm;
+          max-width: ${qrMm + 4}mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+    .sub { font-size: ${qrMm >= 30 ? 5.6 : 4.8}pt; color: #475569;
+           max-width: ${qrMm + 4}mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
   </style>
 </head>
 <body>
-<div class="card">
-  <div class="header">
-    <div class="school-name">${schoolName.toUpperCase()}</div>
-    <div class="subtitle">Student Identity Card</div>
+  <div class="sticker">
+    <img class="qr" src="${qrDataUrl}" alt="QR"/>
+    ${showCaption ? `<div class="nm">${esc(student.full_name)}</div>` : ''}
+    ${showCaption && subParts.length ? `<div class="sub">${subParts.join(' &middot; ')}</div>` : ''}
   </div>
-  <div class="body">
-    <div class="avatar">${student.full_name.charAt(0).toUpperCase()}</div>
-    <div class="name">${student.full_name}</div>
-    ${className ? `<div class="class">${className}</div>` : ''}
-    ${student.student_uid ? `<div class="uid">${student.student_uid}</div>` : ''}
-    <div class="qr-box">
-      <img class="qr-img" src="${qrDataUrl}" alt="QR"/>
-      <div class="scan-label">Scan for attendance</div>
-    </div>
-  </div>
-  <div class="footer">
-    <div>
-      <div class="footer-label">Father</div>
-      <div class="footer-value">${student.father_name ?? '—'}</div>
-    </div>
-    <div style="text-align:right">
-      <div class="footer-label">Phone</div>
-      <div class="footer-value">${student.parent_phone ?? '—'}</div>
-    </div>
-  </div>
-</div>
 </body>
 </html>`
 
@@ -200,61 +162,75 @@ function QRCardModal({
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-xs p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-            <QrCode size={18} className="text-brand-600" /> ID Card Preview
+            <QrCode size={18} className="text-brand-600" /> Print QR code
           </h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
             <X size={18} />
           </button>
         </div>
 
-        {/* Card preview */}
-        <div className="border-2 border-brand-200 rounded-xl overflow-hidden mb-4">
-          {/* Card header */}
-          <div className="bg-brand-700 text-white text-center py-2 px-3">
-            <p className="text-xs font-bold tracking-wide">{schoolName.toUpperCase()}</p>
-            <p className="text-[10px] opacity-80">Student Identity Card</p>
-          </div>
-          {/* Card body */}
-          <div className="flex flex-col items-center gap-2 py-4 px-3 bg-white">
-            <div className="w-10 h-10 bg-brand-100 rounded-full flex items-center justify-center">
-              <span className="text-brand-700 font-bold text-lg">
-                {student.full_name.charAt(0).toUpperCase()}
-              </span>
-            </div>
-            <p className="font-semibold text-slate-900 text-sm text-center leading-tight">
-              {student.full_name}
-            </p>
-            {student.classes && (
-              <p className="text-xs text-slate-500">
-                {student.classes.name}{student.classes.section ? ` - ${student.classes.section}` : ''}
-              </p>
+        {/* QR preview — this is all that prints */}
+        <div className="flex items-center justify-center border border-slate-100 rounded-xl py-5 mb-4">
+          <div className={`flex flex-col items-center gap-1 p-1.5 ${cutGuide ? 'outline-dashed outline-1 outline-slate-400' : ''}`}>
+            <canvas ref={canvasRef} className="rounded-lg" />
+            {!qrReady && (
+              <div className="w-[200px] h-[200px] bg-slate-100 rounded-lg flex items-center justify-center">
+                <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
+              </div>
             )}
-            {student.student_uid && (
-              <span className="font-mono text-xs bg-brand-50 text-brand-700 border border-brand-200 px-2 py-0.5 rounded">
-                {student.student_uid}
-              </span>
+            {showCaption && (
+              <>
+                <p className="text-xs font-semibold text-slate-800 mt-1">{student.full_name}</p>
+                <p className="text-[10px] text-slate-500">
+                  {[student.student_uid,
+                    student.classes
+                      ? `${student.classes.name}${student.classes.section ? '-' + student.classes.section : ''}`
+                      : null,
+                  ].filter(Boolean).join(' · ')}
+                </p>
+              </>
             )}
-            {/* QR canvas */}
-            <div className="flex flex-col items-center gap-1">
-              <canvas ref={canvasRef} className="rounded-lg" />
-              {!qrReady && (
-                <div className="w-[200px] h-[200px] bg-slate-100 rounded-lg flex items-center justify-center">
-                  <div className="w-6 h-6 border-2 border-brand-500 border-t-transparent rounded-full animate-spin" />
-                </div>
-              )}
-              <p className="text-[10px] text-slate-400">Scan for attendance</p>
-            </div>
           </div>
-          {/* Card footer */}
-          <div className="bg-slate-50 border-t border-slate-100 px-3 py-2 flex justify-between">
-            <div>
-              <p className="text-[10px] text-slate-400">Father</p>
-              <p className="text-xs text-slate-600 font-medium">{student.father_name ?? '—'}</p>
-            </div>
-            <div className="text-right">
-              <p className="text-[10px] text-slate-400">Phone</p>
-              <p className="text-xs text-slate-600 font-medium">{student.parent_phone ?? '—'}</p>
-            </div>
+        </div>
+
+        {/* Size + caption controls */}
+        <div className="mb-4">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            {[20, 25, 32].map(mm => (
+              <button
+                key={mm}
+                onClick={() => setQrMm(mm)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                  qrMm === mm
+                    ? 'bg-brand-50 border-brand-300 text-brand-700'
+                    : 'border-slate-200 text-slate-500 hover:border-slate-300'
+                }`}
+              >
+                {mm}mm
+              </button>
+            ))}
+            <input
+              type="range" min={15} max={60} step={1} value={qrMm}
+              onChange={e => setQrMm(Number(e.target.value))}
+              className="w-20 accent-brand-600"
+            />
+            <span className="text-xs font-mono text-slate-600 w-10">{qrMm}mm</span>
+          </div>
+          <div className="flex items-center justify-center gap-4">
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-600">
+              <input
+                type="checkbox" className="w-3.5 h-3.5 accent-brand-600"
+                checked={showCaption} onChange={e => setShowCaption(e.target.checked)}
+              />
+              Name &amp; ID caption
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer text-xs text-slate-600">
+              <input
+                type="checkbox" className="w-3.5 h-3.5 accent-brand-600"
+                checked={cutGuide} onChange={e => setCutGuide(e.target.checked)}
+              />
+              Cut guide border
+            </label>
           </div>
         </div>
 
@@ -264,10 +240,11 @@ function QRCardModal({
           className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
         >
           <Printer size={16} />
-          {qrReady ? 'Print ID Card' : 'Generating QR…'}
+          {qrReady ? `Print QR (${qrMm}mm)` : 'Generating QR…'}
         </button>
         <p className="text-xs text-slate-400 text-center mt-2">
-          Card size: 54×85mm (standard ID)
+          Prints only the code — stick it on the student&apos;s ID card.
+          Set Scale = 100% in the print dialog.
         </p>
       </div>
     </div>
@@ -291,7 +268,6 @@ export default function StudentDetailPage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showAadhaar,       setShowAadhaar]       = useState(false)
   const [showQRModal,       setShowQRModal]       = useState(false)
-  const [schoolName,        setSchoolName]        = useState('School')
   const [error,             setError]             = useState('')
   const [form,              setForm]              = useState<Partial<StudentData>>({})
 
@@ -313,11 +289,10 @@ export default function StudentDetailPage() {
 
   const fetchData = useCallback(async () => {
     const supabase = createClient()
-    const [studentRes, feesRes, classesRes, profileRes, attendanceRes, structuresRes] = await Promise.all([
+    const [studentRes, feesRes, classesRes, attendanceRes, structuresRes] = await Promise.all([
       supabase.from('students').select('*, classes(id, name, section)').eq('id', studentId).single(),
       supabase.from('fee_dues').select('id, label, total_due, amount_paid, balance, status, due_date').eq('student_id', studentId).order('due_date', { ascending: false }),
       supabase.from('classes').select('id, name, section').order('name'),
-      supabase.from('profiles').select('school_id, schools(name)').single(),
       // Last 90 days of attendance — enough for monthly view + history
       supabase.from('attendance')
         .select('id, scan_date, scan_time, entry_type, gate')
@@ -339,12 +314,6 @@ export default function StudentDetailPage() {
     setFees((feesRes.data ?? []) as FeeRecord[])
     setClasses((classesRes.data ?? []) as ClassOption[])
     setFeeStructures((structuresRes.data ?? []) as FeeStructureOption[])
-    if (profileRes.data) {
-      const p = profileRes.data as any
-      setSchoolName(
-        Array.isArray(p.schools) ? p.schools[0]?.name ?? 'School' : p.schools?.name ?? 'School'
-      )
-    }
     setAttendance((attendanceRes.data ?? []) as AttendanceRecord[])
     setLoading(false)
   }, [studentId])
@@ -927,11 +896,10 @@ export default function StudentDetailPage() {
         </div>
       </div>
 
-      {/* QR Card Modal */}
+      {/* Print QR modal — QR code only */}
       {showQRModal && student && (
         <QRCardModal
           student={student}
-          schoolName={schoolName}
           onClose={() => setShowQRModal(false)}
         />
       )}

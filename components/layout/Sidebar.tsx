@@ -12,6 +12,7 @@ import {
   IndianRupee,
   BookOpen,
   CalendarCheck,
+  GraduationCap,
   Briefcase,
   ClipboardList,
   LogOut,
@@ -28,6 +29,7 @@ const navItems = [
   { label: 'Fees',       href: '/dashboard/fees',       icon: IndianRupee     },
   { label: 'Classes',    href: '/dashboard/classes',    icon: BookOpen        },
   { label: 'Attendance', href: '/dashboard/attendance', icon: CalendarCheck   },
+  { label: 'Exams',      href: '/dashboard/exams',      icon: GraduationCap   },
 ]
 
 // chat17 Module 7 - which core nav items each role sees. Must stay in
@@ -35,7 +37,7 @@ const navItems = [
 // what the middleware blocks. Roles not listed (school_admin,
 // super_admin) see everything.
 const ROLE_NAV: Record<string, string[]> = {
-  principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance'],
+  principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance', '/dashboard/exams'],
   teacher:      ['/dashboard'],
   collector:    ['/dashboard/fees'],
   receptionist: ['/dashboard/students', '/dashboard/classes'],

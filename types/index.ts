@@ -591,3 +591,10 @@ export interface ClassFeeSummaryRow {
   balance: number
   overdue_count: number
 }
+
+
+// ============================================
+// EXAM MODULE (chat21+) — see types/exams.ts
+// ============================================
+
+export * from './exams'

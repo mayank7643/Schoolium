@@ -9,11 +9,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
 import Link from 'next/link'
 import { GraduationCap, Upload, Download, Lock, X, CalendarCheck } from 'lucide-react'
-import type { QuestionPaper, TeacherAssignments } from '@/types'
+import type { QuestionPaper, TeacherAssignments, SubmissionStatus } from '@/types'
 import { ExamStatusBadge, formatDate, formatTime } from '@/components/exams/examUi'
 import { uploadQuestionPaper, downloadQuestionPaper } from '@/components/exams/qpActions'
 import { useRef } from 'react'
 import type { ExamStatus } from '@/types'
+import { PencilLine, ClipboardCheck } from 'lucide-react'
 
 interface MyPaper {
   exam_subject_id: string
@@ -26,10 +27,20 @@ interface MyPaper {
   start_time: string | null
   qp: QuestionPaper | null
   qp_version: number | null
+  marks_status: SubmissionStatus | null
+}
+
+interface VerifyItem {
+  exam_subject_id: string
+  exam_name: string
+  class_label: string
+  subject_name: string
+  status: SubmissionStatus
 }
 
 export default function MyExamsPage() {
   const [papers, setPapers] = useState<MyPaper[]>([])
+  const [verifyQueue, setVerifyQueue] = useState<VerifyItem[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -50,12 +61,12 @@ export default function MyExamsPage() {
     const { data: es } = await supabase
       .from('exam_subjects')
       .select('id, exam_id, class_id, subject_id, exam_date, start_time, is_cancelled, classes(name, section), subjects(name), exams!inner(id, name, status)')
-      .in('exams.status', ['draft', 'published', 'ongoing'])
+      .in('exams.status', ['draft', 'published', 'ongoing', 'completed'])
       .order('exam_date')
 
     /* eslint-disable @typescript-eslint/no-explicit-any */
-    const mine = ((es ?? []) as any[]).filter(p =>
-      !p.is_cancelled && keys.has(`${p.subject_id}:${p.class_id}`))
+    const rowsAll = (es ?? []) as any[]
+    const mine = rowsAll.filter(p => !p.is_cancelled && keys.has(`${p.subject_id}:${p.class_id}`))
 
     const qpRes = await supabase.from('question_papers').select('*')
     const qps = new Map(((qpRes.data ?? []) as QuestionPaper[]).map(q => [q.exam_subject_id, q]))
@@ -66,6 +77,10 @@ export default function MyExamsPage() {
         .select('id, version_no').in('id', versionIds)
       ;((vs ?? []) as any[]).forEach(v => vMap.set(v.id, v.version_no))
     }
+
+    // marks submission status per paper (RLS returns only my papers/class)
+    const { data: subs } = await supabase.from('marks_submissions').select('exam_subject_id, status')
+    const subMap = new Map(((subs ?? []) as any[]).map(s => [s.exam_subject_id, s.status as SubmissionStatus]))
 
     setPapers(mine.map(p => {
       const qp = qps.get(p.id) ?? null
@@ -80,8 +95,25 @@ export default function MyExamsPage() {
         start_time: p.start_time,
         qp,
         qp_version: qp?.current_version_id ? (vMap.get(qp.current_version_id) ?? null) : null,
+        marks_status: subMap.get(p.id) ?? null,
       }
     }))
+
+    // class-teacher verification queue: submitted papers of my classes
+    // that I don't teach the subject of (subMap already RLS-scoped).
+    const classTeacherOf = new Set((ta as TeacherAssignments)?.class_teacher_of?.map(c => c.class_id) ?? [])
+    const vq: VerifyItem[] = rowsAll
+      .filter(p => !p.is_cancelled
+        && classTeacherOf.has(p.class_id)
+        && subMap.get(p.id) === 'submitted')
+      .map(p => ({
+        exam_subject_id: p.id,
+        exam_name: p.exams?.name ?? '—',
+        class_label: p.classes ? `${p.classes.name}${p.classes.section ? '-' + p.classes.section : ''}` : '—',
+        subject_name: p.subjects?.name ?? '—',
+        status: 'submitted' as SubmissionStatus,
+      }))
+    setVerifyQueue(vq)
     /* eslint-enable @typescript-eslint/no-explicit-any */
     setLoading(false)
   }, [])
@@ -141,9 +173,30 @@ export default function MyExamsPage() {
         </div>
       )}
 
+      {/* Class-teacher verification queue */}
+      {!loading && verifyQueue.length > 0 && (
+        <div className="card p-5 mb-4 border-blue-100 bg-blue-50/30">
+          <h3 className="font-semibold text-slate-900 text-sm mb-3 flex items-center gap-2">
+            <ClipboardCheck size={15} className="text-blue-600" /> To verify (your classes)
+          </h3>
+          <div className="flex flex-col divide-y divide-blue-100/50">
+            {verifyQueue.map(v => (
+              <Link key={v.exam_subject_id} href={`/dashboard/my-exams/verify/${v.exam_subject_id}`}
+                className="flex items-center justify-between gap-3 py-2.5 group">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-800">{v.subject_name} · {v.class_label}</p>
+                  <p className="text-xs text-slate-500">{v.exam_name}</p>
+                </div>
+                <span className="text-xs text-blue-600 font-medium group-hover:text-blue-700">Review →</span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="card h-64 animate-pulse bg-slate-50" />
-      ) : papers.length === 0 ? (
+      ) : papers.length === 0 && verifyQueue.length === 0 ? (
         <div className="card flex flex-col items-center justify-center py-16 text-center">
           <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mb-4">
             <GraduationCap size={24} className="text-slate-400" />
@@ -178,6 +231,15 @@ export default function MyExamsPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
+                    {(p.exam_status === 'ongoing' || p.exam_status === 'completed') && (
+                      <Link href={`/dashboard/my-exams/marks/${p.exam_subject_id}`}
+                        className="btn-secondary text-xs flex items-center gap-1">
+                        <PencilLine size={12} />
+                        {p.marks_status && p.marks_status !== 'pending'
+                          ? (p.marks_status === 'rejected' ? 'Fix marks' : 'Marks')
+                          : 'Enter marks'}
+                      </Link>
+                    )}
                     {p.exam_status === 'ongoing' && (
                       <Link href={`/dashboard/my-exams/attendance/${p.exam_subject_id}`}
                         className="btn-secondary text-xs flex items-center gap-1">

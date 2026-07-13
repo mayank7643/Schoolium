@@ -251,6 +251,69 @@ export interface QuestionPaperAccessLog {
   profiles?: { full_name: string } | null
 }
 
+export type SubmissionStatus = 'pending' | 'submitted' | 'verified' | 'approved' | 'frozen' | 'rejected'
+
+export interface MarksSubmission {
+  id: string
+  school_id: string
+  exam_subject_id: string
+  status: SubmissionStatus
+  submitted_by: string | null
+  submitted_at: string | null
+  verified_by: string | null
+  verified_at: string | null
+  approved_by: string | null
+  approved_at: string | null
+  frozen_at: string | null
+  rejection_reason: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface MarksGridRow {
+  student_id: string
+  roll_number: number
+  full_name: string
+  photo_url: string | null
+  enroll_status: EnrollmentStatus
+  session_exempted: boolean
+  room_status: ExamAttStatus | null
+  theory: number | null
+  practical: number | null
+  internal: number | null
+  grace: number | null
+  is_absent: boolean
+  is_exempted: boolean
+  total: number | null
+}
+
+export interface MarksGridData {
+  status: SubmissionStatus
+  max_theory: number
+  max_practical: number
+  max_internal: number
+  pass_marks: number
+  total_max: number
+  can_edit: boolean
+  rows: MarksGridRow[]
+}
+
+export interface MarksBoardRow {
+  exam_subject_id: string
+  class_label: string
+  subject_name: string
+  status: SubmissionStatus
+  entered: number
+  enrolled: number
+  submitted_at: string | null
+  updated_at: string | null
+}
+
+export interface SaveMarksResult {
+  saved: number
+  rejected: Array<{ student_id: string; reason: string }>
+}
+
 export type ExamAttStatus = 'present' | 'absent' | 'medical' | 'late'
 export type ExamAttSource = 'qr' | 'manual'
 

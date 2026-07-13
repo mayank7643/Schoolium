@@ -46,6 +46,10 @@ psql -f "Migration sql/validation/exam_question_papers_smoke_tests.sql"
 # 8. Phase 5 (exam_attendance): apply + smoke
 psql -v ON_ERROR_STOP=1 -f "supabase/migrations/20260711130000_exam_attendance.sql"
 psql -f "Migration sql/validation/exam_attendance_smoke_tests.sql"
+
+# 9. Phase 6 (exam_marks): apply + smoke
+psql -v ON_ERROR_STOP=1 -f "supabase/migrations/20260711140000_exam_marks.sql"
+psql -f "Migration sql/validation/exam_marks_smoke_tests.sql"
 ```
 
 Every `T*` line must print its expected value and every `DO` block must print

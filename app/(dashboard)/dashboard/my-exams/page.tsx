@@ -7,7 +7,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/utils/supabase/client'
-import { GraduationCap, Upload, Download, Lock, X } from 'lucide-react'
+import Link from 'next/link'
+import { GraduationCap, Upload, Download, Lock, X, CalendarCheck } from 'lucide-react'
 import type { QuestionPaper, TeacherAssignments } from '@/types'
 import { ExamStatusBadge, formatDate, formatTime } from '@/components/exams/examUi'
 import { uploadQuestionPaper, downloadQuestionPaper } from '@/components/exams/qpActions'
@@ -177,6 +178,12 @@ export default function MyExamsPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
+                    {p.exam_status === 'ongoing' && (
+                      <Link href={`/dashboard/my-exams/attendance/${p.exam_subject_id}`}
+                        className="btn-secondary text-xs flex items-center gap-1">
+                        <CalendarCheck size={12} /> Attendance
+                      </Link>
+                    )}
                     {p.qp?.status === 'final' ? (
                       <span className="text-xs text-slate-400 flex items-center gap-1"><Lock size={11} /> locked</span>
                     ) : (

@@ -251,7 +251,50 @@ export interface QuestionPaperAccessLog {
   profiles?: { full_name: string } | null
 }
 
+export type ExamAttStatus = 'present' | 'absent' | 'medical' | 'late'
+export type ExamAttSource = 'qr' | 'manual'
+
+export interface ExamAttendance {
+  id: string
+  school_id: string
+  exam_subject_id: string
+  student_id: string
+  status: ExamAttStatus
+  source: ExamAttSource
+  remarks: string | null
+  marked_by: string | null
+  marked_at: string
+  created_at: string
+  updated_at: string
+}
+
 // ── RPC payloads / results (match RETURNS exactly) ──────────────
+
+export interface ExamAttendanceScanResult {
+  ok: boolean
+  reason?: 'unknown_card' | 'revoked_card' | 'wrong_exam' | 'wrong_class'
+  status_set?: ExamAttStatus
+  student_name?: string
+  photo_url?: string | null
+  roll_number?: number
+  seat_number?: string | null
+  class_label?: string
+  subject_name?: string
+  warnings?: string[]
+}
+
+export interface ExamAttendanceReportRow {
+  exam_subject_id: string
+  class_label: string
+  subject_name: string
+  exam_date: string | null
+  enrolled: number
+  present: number
+  late: number
+  absent: number
+  medical: number
+  unmarked: number
+}
 
 export interface RegisterQpUploadResult {
   question_paper_id: string

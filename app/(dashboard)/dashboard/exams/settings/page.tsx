@@ -8,11 +8,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/client'
-import { ArrowLeft, Plus, X, Pencil, Trash2, DoorOpen, CalendarOff, Tags } from 'lucide-react'
-import type { AcademicSession, ExamType, ExamTypeCategory, ExamRoom, Holiday } from '@/types'
+import { ArrowLeft, Plus, X, Pencil, Trash2, DoorOpen, CalendarOff, Tags, GraduationCap } from 'lucide-react'
+import type { AcademicSession, ExamType, ExamTypeCategory, ExamRoom, Holiday, GradeScale, GradeBand } from '@/types'
 import { formatDate } from '@/components/exams/examUi'
 
-type Tab = 'types' | 'rooms' | 'holidays'
+type Tab = 'types' | 'rooms' | 'holidays' | 'grades'
 
 const CATEGORIES: Array<{ value: ExamTypeCategory; label: string }> = [
   { value: 'unit_test',   label: 'Unit Test' },
@@ -31,6 +31,8 @@ export default function ExamSettingsPage() {
   const [rooms, setRooms] = useState<ExamRoom[]>([])
   const [holidays, setHolidays] = useState<Holiday[]>([])
   const [sessions, setSessions] = useState<AcademicSession[]>([])
+  const [gradeScales, setGradeScales] = useState<GradeScale[]>([])
+  const [gradeBands, setGradeBands] = useState<GradeBand[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -45,18 +47,31 @@ export default function ExamSettingsPage() {
     const supabase = createClient()
     const { data: profile } = await supabase.from('profiles').select('school_id').single()
     setSchoolId(profile?.school_id ?? '')
-    const [tRes, rRes, hRes, sRes] = await Promise.all([
+    const [tRes, rRes, hRes, sRes, gsRes, gbRes] = await Promise.all([
       supabase.from('exam_types').select('*').order('name'),
       supabase.from('exam_rooms').select('*').order('name'),
       supabase.from('holidays').select('*').order('holiday_date'),
       supabase.from('academic_sessions').select('*').neq('status', 'archived').order('start_date', { ascending: false }),
+      supabase.from('grade_scales').select('*').order('is_default', { ascending: false }),
+      supabase.from('grade_bands').select('*').order('min_percent', { ascending: false }),
     ])
     setTypes((tRes.data ?? []) as ExamType[])
     setRooms((rRes.data ?? []) as ExamRoom[])
     setHolidays((hRes.data ?? []) as Holiday[])
     setSessions((sRes.data ?? []) as AcademicSession[])
+    setGradeScales((gsRes.data ?? []) as GradeScale[])
+    setGradeBands((gbRes.data ?? []) as GradeBand[])
     setLoading(false)
   }, [])
+
+  async function seedCbse() {
+    setBusy(true); setError('')
+    const supabase = createClient()
+    const { error } = await supabase.rpc('seed_cbse_grade_scale', { p_school_id: schoolId })
+    setBusy(false)
+    if (error) { setError(error.message); return }
+    await fetchAll()
+  }
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
@@ -142,6 +157,7 @@ export default function ExamSettingsPage() {
     { key: 'types',    label: 'Exam types', icon: Tags },
     { key: 'rooms',    label: 'Rooms',      icon: DoorOpen },
     { key: 'holidays', label: 'Holidays',   icon: CalendarOff },
+    { key: 'grades',   label: 'Grades',     icon: GraduationCap },
   ]
 
   return (
@@ -154,11 +170,13 @@ export default function ExamSettingsPage() {
           <h1 className="text-2xl font-bold text-slate-900">Exam settings</h1>
           <p className="text-slate-500 text-sm mt-1">Types, rooms and the holiday calendar</p>
         </div>
-        <button
-          onClick={() => openModal(tab === 'types' ? 'type' : tab === 'rooms' ? 'room' : 'holiday')}
-          className="btn-primary flex items-center gap-2 text-sm">
-          <Plus size={16} /> Add
-        </button>
+        {tab !== 'grades' && (
+          <button
+            onClick={() => openModal(tab === 'types' ? 'type' : tab === 'rooms' ? 'room' : 'holiday')}
+            className="btn-primary flex items-center gap-2 text-sm">
+            <Plus size={16} /> Add
+          </button>
+        )}
       </div>
 
       <div className="flex gap-1.5 mb-4">
@@ -248,6 +266,42 @@ export default function ExamSettingsPage() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )
+          )}
+
+          {tab === 'grades' && (
+            gradeScales.length === 0 ? (
+              <div className="py-10 text-center">
+                <p className="text-sm text-slate-400 mb-3">
+                  No grade scale yet. Results use the school default; seed the CBSE 8-point
+                  scale to get started (also seeded automatically on first result computation).
+                </p>
+                <button onClick={seedCbse} disabled={busy} className="btn-primary text-sm">Seed CBSE scale</button>
+              </div>
+            ) : (
+              <div className="p-4 flex flex-col gap-4">
+                {gradeScales.map(gs => (
+                  <div key={gs.id}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-sm font-semibold text-slate-800">{gs.name}</span>
+                      {gs.is_default && <span className="badge-green">default</span>}
+                      {!gs.is_active && <span className="text-xs text-slate-400">inactive</span>}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {gradeBands.filter(b => b.grade_scale_id === gs.id).map(b => (
+                        <span key={b.id} className={`text-xs px-2 py-1 rounded-lg border ${b.is_fail ? 'border-red-200 bg-red-50 text-red-600' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
+                          <span className="font-semibold">{b.grade_label}</span> {b.min_percent}–{b.max_percent}%
+                          {b.grade_point !== null ? ` · ${b.grade_point}` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <p className="text-xs text-slate-400">
+                  Custom grade-scale editing arrives with analytics. The CBSE default covers
+                  percentage, grade and CGPA out of the box.
+                </p>
               </div>
             )
           )}

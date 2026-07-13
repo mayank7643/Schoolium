@@ -251,6 +251,98 @@ export interface QuestionPaperAccessLog {
   profiles?: { full_name: string } | null
 }
 
+export type ResultStatus = 'pass' | 'fail' | 'withheld' | 'absent'
+
+export interface GradeScale {
+  id: string
+  school_id: string
+  session_id: string | null
+  name: string
+  is_default: boolean
+  is_active: boolean
+  created_at: string
+}
+
+export interface GradeBand {
+  id: string
+  school_id: string
+  grade_scale_id: string
+  min_percent: number
+  max_percent: number
+  grade_label: string
+  grade_point: number | null
+  is_fail: boolean
+  description: string | null
+}
+
+export interface ExamResult {
+  id: string
+  school_id: string
+  exam_id: string
+  student_id: string
+  enrollment_id: string
+  grade_scale_id: string | null
+  total_max: number
+  total_obtained: number
+  percentage: number
+  grade_label: string | null
+  grade_point: number | null
+  subjects_failed: number
+  result_status: ResultStatus
+  rank_in_class: number | null
+  attendance_percent: number | null
+  is_final: boolean
+  computed_by: string | null
+  computed_at: string
+}
+
+export interface ReportCard {
+  id: string
+  school_id: string
+  session_id: string
+  exam_id: string | null
+  term_id: string | null
+  student_id: string
+  snapshot: ReportCardSnapshot
+  class_teacher_remarks: string | null
+  qr_token: string
+  version: number
+  generated_by: string | null
+  generated_at: string
+}
+
+export interface ReportCardSnapshot {
+  school: { name: string; address: string | null; logo_url: string | null }
+  exam: { name: string }
+  student: { full_name: string; student_uid: string | null; photo_url: string | null; roll_number: number; class: string }
+  result: {
+    total_max: number; total_obtained: number; percentage: number
+    grade: string | null; cgpa: number | null; status: ResultStatus
+    rank: number | null; attendance_percent: number | null; subjects_failed: number
+  }
+  subjects: Array<{
+    subject: string; max: number; theory: number | null; practical: number | null
+    internal: number | null; grace: number | null; total: number | null
+    pass_marks: number; is_absent: boolean; grade: string | null
+  }>
+  remarks?: string
+}
+
+export interface ComputeResultsResult { computed: number; withheld: number }
+export interface GenerateReportCardsResult { generated: number }
+
+export interface ClassResultSummaryRow {
+  class_id: string
+  class_label: string
+  students: number
+  average_pct: number
+  pass_count: number
+  fail_count: number
+  pass_pct: number
+  topper_name: string | null
+  topper_pct: number | null
+}
+
 export type SubmissionStatus = 'pending' | 'submitted' | 'verified' | 'approved' | 'frozen' | 'rejected'
 
 export interface MarksSubmission {

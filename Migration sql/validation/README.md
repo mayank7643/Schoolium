@@ -17,6 +17,7 @@ psql -v ON_ERROR_STOP=1 -f "Migration sql/validation/00_supabase_shim.sql"
 psql -v ON_ERROR_STOP=1 -f "Migration sql/chat02_schoolium_initial_schema.sql"
 PGOPTIONS="-c check_function_bodies=off" \
   psql -v ON_ERROR_STOP=1 -f "Migration sql/chat17_staff_management_full_consolidated.sql"
+psql -v ON_ERROR_STOP=1 -f "Migration sql/validation/01_baseline_patch.sql"
 psql -c "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
          GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
          ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -50,6 +51,10 @@ psql -f "Migration sql/validation/exam_attendance_smoke_tests.sql"
 # 9. Phase 6 (exam_marks): apply + smoke
 psql -v ON_ERROR_STOP=1 -f "supabase/migrations/20260711140000_exam_marks.sql"
 psql -f "Migration sql/validation/exam_marks_smoke_tests.sql"
+
+# 10. Phase 7 (exam_results): apply + smoke
+psql -v ON_ERROR_STOP=1 -f "supabase/migrations/20260711150000_exam_results.sql"
+psql -f "Migration sql/validation/exam_results_smoke_tests.sql"
 ```
 
 Every `T*` line must print its expected value and every `DO` block must print

@@ -252,6 +252,42 @@ export interface QuestionPaperAccessLog {
 }
 
 export type ResultStatus = 'pass' | 'fail' | 'withheld' | 'absent'
+export type PublicationStatus = 'unpublished' | 'scheduled' | 'published' | 'locked'
+
+export interface ResultPublication {
+  id: string
+  school_id: string
+  exam_id: string
+  status: PublicationStatus
+  scheduled_for: string | null
+  published_at: string | null
+  published_by: string | null
+  unpublished_at: string | null
+  unpublished_by: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PublicResultExam { exam_id: string; exam_name: string; session_name: string }
+
+export interface PublicResultCheck {
+  found: boolean
+  reason?: 'not_published' | 'no_match'
+  report?: ReportCardSnapshot
+}
+
+export interface ReportCardVerify {
+  valid: boolean
+  reason?: 'not_found' | 'not_published'
+  version_status?: 'current' | 'superseded'
+  student_name?: string
+  class?: string
+  exam_name?: string
+  percentage?: string
+  result?: string
+  generated_at?: string
+}
 
 export interface GradeScale {
   id: string

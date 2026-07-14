@@ -207,6 +207,11 @@ export default function ResultsPage() {
                 <Download size={15} /> Download PDF
               </button>
             )}
+            {reportCardCount > 0 && !stale && (
+              <Link href={`/dashboard/exams/${examId}/results/publish`} className="btn-primary text-sm ml-auto">
+                Publish →
+              </Link>
+            )}
           </div>
 
           {/* Per-student results */}

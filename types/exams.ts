@@ -379,6 +379,15 @@ export interface ClassResultSummaryRow {
   topper_pct: number | null
 }
 
+// ── Analytics (Phase 9) ─────────────────────────────────────────
+export interface GradeDistributionRow { grade_label: string; sort_min: number; student_count: number }
+export interface TopperRow { rank_in_class: number; student_name: string; class_label: string; percentage: number; grade_label: string | null }
+export interface SubjectPerformanceRow { subject_name: string; students: number; average_pct: number; pass_pct: number; highest: number; lowest: number }
+export interface FailListRow { student_name: string; class_label: string; roll_number: number; percentage: number; subjects_failed: number }
+export interface TeacherPerformanceRow { staff_id: string; teacher_name: string; subject_name: string; class_label: string; papers: number; students: number; average_pct: number; pass_pct: number }
+export interface SchoolPerformanceRow { exam_id: string; exam_name: string; start_date: string | null; students: number; average_pct: number; pass_pct: number }
+export interface StudentProgressRow { exam_id: string; exam_name: string; start_date: string | null; percentage: number; grade_label: string | null; rank_in_class: number | null; result_status: ResultStatus }
+
 export type SubmissionStatus = 'pending' | 'submitted' | 'verified' | 'approved' | 'frozen' | 'rejected'
 
 export interface MarksSubmission {

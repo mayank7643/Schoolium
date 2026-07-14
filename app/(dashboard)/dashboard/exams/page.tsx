@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/utils/supabase/client'
-import { GraduationCap, Plus, CalendarRange, ChevronRight, Settings2 } from 'lucide-react'
+import { GraduationCap, Plus, CalendarRange, ChevronRight, Settings2, BarChart3 } from 'lucide-react'
 import type { AcademicSession, Exam, ExamStatus } from '@/types'
 import { ExamStatusBadge, formatDate } from '@/components/exams/examUi'
 
@@ -76,6 +76,9 @@ export default function ExamsPage() {
         <div className="flex items-center gap-2">
           <Link href="/dashboard/exams/sessions" className="btn-secondary text-sm flex items-center gap-1.5">
             <CalendarRange size={15} /> Sessions
+          </Link>
+          <Link href="/dashboard/exams/analytics" className="btn-secondary text-sm flex items-center gap-1.5">
+            <BarChart3 size={15} /> Analytics
           </Link>
           <Link href="/dashboard/exams/settings" className="btn-secondary text-sm flex items-center gap-1.5">
             <Settings2 size={15} /> Settings

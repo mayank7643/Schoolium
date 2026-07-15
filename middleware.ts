@@ -34,9 +34,11 @@ const ROLE_HOME: Record<string, string> = {
 // My Classes + class attendance + read-only class fees arrive with
 // the Teacher Workspace module and will be added back here.
 const ROLE_ALLOW: Record<string, string[]> = {
-  teacher: ['/dashboard/leave', '/dashboard/my-classes'],
+  teacher: ['/dashboard/leave', '/dashboard/my-classes', '/dashboard/my-exams'],
   collector: ['/dashboard/fees', '/dashboard/leave'],
-  receptionist: ['/dashboard/students', '/dashboard/classes', '/dashboard/leave'],
+  // exam module phase 3: front-desk admit card printing is an exact
+  // carve-out - receptionists never see the wider /dashboard/exams console
+  receptionist: ['/dashboard/students', '/dashboard/classes', '/dashboard/leave', '/dashboard/exams/print-admit-cards'],
   staff: ['/dashboard/leave'],
   // chat21: operator = front desk for the alerts product. The alerts
   // settings page renders admin-only sections itself; credentials and

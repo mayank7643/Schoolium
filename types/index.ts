@@ -604,6 +604,13 @@ export interface ClassFeeSummaryRow {
 
 
 // ============================================
+// EXAM MODULE — see types/exams.ts
+// ============================================
+
+export * from './exams'
+
+
+// ============================================
 // ALERTS BYOG PIPELINE (chat21)
 // docs/schoolium-alerts-blueprint.md
 // ============================================
@@ -824,3 +831,4 @@ export interface NoticeDeliveryStats {
   n_dead: number
   cost_paise: number
 }
+

@@ -12,10 +12,12 @@ import {
   IndianRupee,
   BookOpen,
   CalendarCheck,
+  GraduationCap,
   Briefcase,
   ClipboardList,
   LogOut,
   Megaphone,
+  Printer,
   School,
   Settings,
   X,
@@ -29,6 +31,7 @@ const navItems = [
   { label: 'Fees',       href: '/dashboard/fees',       icon: IndianRupee     },
   { label: 'Classes',    href: '/dashboard/classes',    icon: BookOpen        },
   { label: 'Attendance', href: '/dashboard/attendance', icon: CalendarCheck   },
+  { label: 'Exams',      href: '/dashboard/exams',      icon: GraduationCap   },
   { label: 'Alerts',     href: '/dashboard/alerts',     icon: Megaphone       },
 ]
 
@@ -38,7 +41,7 @@ const navItems = [
 // super_admin) see everything. chat21: operator (front desk for the
 // alerts product) gets Alerts + Students; principal sees Alerts too.
 const ROLE_NAV: Record<string, string[]> = {
-  principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance', '/dashboard/alerts'],
+  principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance', '/dashboard/exams', '/dashboard/alerts'],
   operator:     ['/dashboard/alerts', '/dashboard/students'],
   teacher:      ['/dashboard'],
   collector:    ['/dashboard/fees'],
@@ -137,6 +140,12 @@ export default function Sidebar({ profile }: SidebarProps) {
           {profile?.role === 'teacher' && (
             <NavLink href="/dashboard/my-classes" icon={BookOpen} label="My Classes" />
           )}
+          {profile?.role === 'teacher' && (
+            <NavLink href="/dashboard/my-exams" icon={GraduationCap} label="My Exams" />
+          )}
+          {profile?.role === 'receptionist' && (
+            <NavLink href="/dashboard/exams/print-admit-cards" icon={Printer} label="Admit Cards" />
+          )}
           {LEAVE_ROLES.includes(profile?.role ?? '') && (
             <NavLink href="/dashboard/leave" icon={ClipboardList} label="My Leave" />
           )}
@@ -213,7 +222,11 @@ export default function Sidebar({ profile }: SidebarProps) {
         {[
           ...visibleNavFor(profile?.role),
           ...(profile?.role === 'teacher'
-            ? [{ label: 'My Classes', href: '/dashboard/my-classes', icon: BookOpen }]
+            ? [{ label: 'My Classes', href: '/dashboard/my-classes', icon: BookOpen },
+               { label: 'My Exams', href: '/dashboard/my-exams', icon: GraduationCap }]
+            : []),
+          ...(profile?.role === 'receptionist'
+            ? [{ label: 'Admit Cards', href: '/dashboard/exams/print-admit-cards', icon: Printer }]
             : []),
           ...(LEAVE_ROLES.includes(profile?.role ?? '')
             ? [{ label: 'My Leave', href: '/dashboard/leave', icon: ClipboardList }]

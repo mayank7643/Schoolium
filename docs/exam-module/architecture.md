@@ -466,4 +466,4 @@ pure ASCII, single PostgREST schema reload at the end — matching chat17's form
 
 ---
 
-*Next: Step 3 — Relationship map (ERD), then Step 4 — Workflow design.*
+*Step 3: `03-relationships.md` · Step 4: `04-workflows.md` · Step 5: `05-api-design.md` · Steps 6+7: `06-07-folders-ui.md` · Step 8: `08-edge-cases.md` · Step 9: `09-security.md` · Phase 1 migration: `supabase/migrations/20260708120000_exam_sessions_core.sql` (validated - see `Migration sql/validation/`).*

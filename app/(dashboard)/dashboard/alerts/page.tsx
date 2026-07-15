@@ -12,7 +12,7 @@ import { createClient } from '@/utils/supabase/client'
 import Link from 'next/link'
 import {
   Megaphone, Send, Upload, Settings, RefreshCw, Download,
-  CheckCheck, Eye, AlertTriangle, IndianRupee, Clock, XCircle,
+  CheckCheck, Eye, AlertTriangle, IndianRupee, Clock, XCircle, Server,
 } from 'lucide-react'
 import type { AlertNotification, OutboxStatus } from '@/types'
 
@@ -187,7 +187,7 @@ export default function AlertsOverviewPage() {
             <Megaphone size={20} className="text-brand-600" /> Alerts
           </h1>
           <p className="text-sm text-slate-500 mt-0.5">
-            Gate attendance &amp; announcement messages, sent through your school&apos;s own gateway
+            Gate attendance &amp; announcement messages — via your own gateway or Schoolium-managed
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -204,6 +204,11 @@ export default function AlertsOverviewPage() {
           {role === 'school_admin' && (
             <Link href="/dashboard/alerts/settings" className="btn-secondary flex items-center gap-1.5">
               <Settings size={15} /> Settings
+            </Link>
+          )}
+          {role === 'super_admin' && (
+            <Link href="/dashboard/alerts/platform" className="btn-secondary flex items-center gap-1.5">
+              <Server size={15} /> Platform gateways
             </Link>
           )}
         </div>

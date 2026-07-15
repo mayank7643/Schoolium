@@ -45,6 +45,7 @@ interface OutboxRow {
   channel_template_id: string
   recipient: string
   vars: Record<string, string>
+  mode: 'byog' | 'managed'
 }
 
 interface ChannelTemplateRow {
@@ -53,16 +54,17 @@ interface ChannelTemplateRow {
   language: string | null
 }
 
-interface SchoolChannelRow {
+// Shared shape for a resolved gateway, whether it came from the
+// school's vault (byog) or Schoolium's platform vault (managed).
+interface GatewayRow {
   id: string
-  school_id: string
-  channel: string
   provider: string
   config: Json
   secret_ciphertext: string
   secret_iv: string
   secret_tag: string
   health: string
+  scope: 'school' | 'platform'
 }
 
 function admin(): SupabaseClient {
@@ -85,10 +87,10 @@ function inMorningBurstIST(): boolean {
   return hour >= 7 && hour < 10
 }
 
-// Pick the gateway for a (school, channel): healthy first. Rows that
-// exist but are auth_failed/suspended cause a TRANSIENT failure so the
-// message survives long enough for the school to fix its credential.
-function pickChannel(rows: SchoolChannelRow[]): { row: SchoolChannelRow | null; unhealthy: boolean } {
+// Pick a gateway: healthy first. Rows that exist but are
+// auth_failed/suspended cause a TRANSIENT failure so the message
+// survives long enough for the credential to be fixed.
+function pickChannel(rows: GatewayRow[]): { row: GatewayRow | null; unhealthy: boolean } {
   if (!rows.length) return { row: null, unhealthy: false }
   const order = ['ok', 'unverified', 'low_balance']
   for (const health of order) {
@@ -137,29 +139,50 @@ async function processBatch(
     ((tplData as ChannelTemplateRow[]) || []).map((t) => [t.id, t]),
   )
 
-  // Group by (school, channel) and decrypt each credential once.
+  // Group by (mode, channel, school). byog decrypts the school's own
+  // credential per school; managed shares one platform credential per
+  // channel across every school, so we decrypt it once.
   const groups = new Map<string, OutboxRow[]>()
   for (const row of rows) {
-    const key = `${row.school_id}:${row.channel}`
+    const key = row.mode === 'managed'
+      ? `managed:${row.channel}`
+      : `byog:${row.school_id}:${row.channel}`
     const list = groups.get(key)
     if (list) list.push(row)
     else groups.set(key, [row])
   }
 
-  for (const [key, groupRows] of Array.from(groups.entries())) {
-    const [schoolId, channel] = key.split(':')
+  const SEL = 'id, provider, config, secret_ciphertext, secret_iv, secret_tag, health'
 
-    const { data: chData } = await db
-      .from('school_channels')
-      .select('id, school_id, channel, provider, config, secret_ciphertext, secret_iv, secret_tag, health')
-      .eq('school_id', schoolId)
-      .eq('channel', channel)
-    const { row: channelRow, unhealthy } = pickChannel((chData as SchoolChannelRow[]) || [])
+  for (const [key, groupRows] of Array.from(groups.entries())) {
+    const parts = key.split(':')
+    const mode = parts[0] as 'byog' | 'managed'
+    const channel = mode === 'managed' ? parts[1] : parts[2]
+    const schoolId = mode === 'managed' ? null : parts[1]
+
+    let gateways: GatewayRow[]
+    if (mode === 'managed') {
+      const { data } = await db
+        .from('platform_channels')
+        .select(SEL)
+        .eq('channel', channel)
+        .eq('is_active', true)
+      gateways = ((data as Omit<GatewayRow, 'scope'>[]) || []).map((g) => ({ ...g, scope: 'platform' as const }))
+    } else {
+      const { data } = await db
+        .from('school_channels')
+        .select(SEL)
+        .eq('school_id', schoolId)
+        .eq('channel', channel)
+      gateways = ((data as Omit<GatewayRow, 'scope'>[]) || []).map((g) => ({ ...g, scope: 'school' as const }))
+    }
+    const { row: channelRow, unhealthy } = pickChannel(gateways)
 
     if (!channelRow) {
+      const where = mode === 'managed' ? 'Schoolium (managed)' : 'this school'
       const outcome = unhealthy
-        ? { kind: 'failed' as const, code: 'CHANNEL_UNHEALTHY', message: 'Gateway credential is auth_failed/suspended. Fix it in channel settings.', permanent: false }
-        : { kind: 'failed' as const, code: 'NO_GATEWAY', message: `No ${channel} gateway configured for this school.`, permanent: true }
+        ? { kind: 'failed' as const, code: 'CHANNEL_UNHEALTHY', message: `${channel} gateway credential is auth_failed/suspended. Fix it in ${where}'s channel settings.`, permanent: false }
+        : { kind: 'failed' as const, code: 'NO_GATEWAY', message: `No ${channel} gateway configured for ${where}.`, permanent: true }
       for (const row of groupRows) {
         await settle(db, row.id, outcome)
         if (outcome.permanent) summary.dead_lettered++
@@ -236,11 +259,20 @@ async function processBatch(
     await Promise.all(workers)
 
     if (sawAuthFailure) {
-      await db.rpc('set_channel_health', {
-        p_school_channel_id: channelRow.id,
-        p_health: 'auth_failed',
-        p_detail: 'Gateway rejected the credential during send. Replace it in channel settings.',
-      })
+      if (channelRow.scope === 'platform') {
+        // Schoolium's own gateway rejected the credential - flag it for
+        // super-admin; every managed school on this channel is affected.
+        await db
+          .from('platform_channels')
+          .update({ health: 'auth_failed', last_verified_at: new Date().toISOString() })
+          .eq('id', channelRow.id)
+      } else {
+        await db.rpc('set_channel_health', {
+          p_school_channel_id: channelRow.id,
+          p_health: 'auth_failed',
+          p_detail: 'Gateway rejected the credential during send. Replace it in channel settings.',
+        })
+      }
     }
   }
 }

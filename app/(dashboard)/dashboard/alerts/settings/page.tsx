@@ -35,6 +35,7 @@ interface ChannelTpl {
   channel: string
   category: string
   provider_template_id: string | null
+  email_subject: string | null
   var_map: Record<string, string>
   approval_status: string
 }
@@ -113,6 +114,12 @@ const GATEWAY_FIELDS: Record<string, GatewayField[]> = {
   ],
 }
 
+const ALERT_CHANNELS: { channel: string; label: string }[] = [
+  { channel: 'whatsapp', label: 'WhatsApp' },
+  { channel: 'sms', label: 'SMS' },
+  { channel: 'email', label: 'Email' },
+]
+
 // The vault stores ONE secret per gateway; multi-part secrets (Meta)
 // are packed into a JSON string exactly as the adapter expects.
 function buildSecret(provider: string, v: Record<string, string>): string {
@@ -134,6 +141,9 @@ export default function AlertsSettingsPage() {
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [loadError, setLoadError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // per-channel delivery mode (byog | managed)
+  const [modes, setModes] = useState<Record<string, 'byog' | 'managed'>>({})
 
   // gateway form
   const [gwChannel, setGwChannel] = useState('whatsapp')
@@ -162,20 +172,21 @@ export default function AlertsSettingsPage() {
       setRole(profile?.role ?? '')
       if (profile?.role !== 'school_admin') return
 
-      const [schoolRes, tplRes, gwRes] = await Promise.all([
+      const [schoolRes, tplRes, gwRes, modeRes] = await Promise.all([
         supabase
           .from('schools')
           .select('id, alerts_enabled, checkout_alerts_enabled, absent_cutoff_time, quiet_hours_start, quiet_hours_end, stale_alert_minutes')
           .eq('id', profile.school_id).single(),
         supabase
           .from('message_templates')
-          .select('id, key, body, channel_templates(id, channel, category, provider_template_id, var_map, approval_status)')
+          .select('id, key, body, channel_templates(id, channel, category, provider_template_id, email_subject, var_map, approval_status)')
           .order('key'),
         // The vault API can fail while the deployment is half set up
         // (missing env vars) - degrade to an inline error, never hang.
         fetch('/api/alerts/channels')
           .then(async (r) => (await r.json()) as { channels?: GatewaySummary[]; webhook_token?: string; error?: string })
           .catch(() => ({ channels: [], webhook_token: '', error: 'Could not reach /api/alerts/channels' })),
+        supabase.from('channel_modes').select('channel, mode'),
       ])
 
       // Missing columns/tables = the chat21 migration has not been
@@ -194,6 +205,11 @@ export default function AlertsSettingsPage() {
       setTemplates((tplRes.data as unknown as Tpl[]) || [])
       setGateways(gwRes.channels || [])
       setWebhookToken(gwRes.webhook_token || '')
+      const modeMap: Record<string, 'byog' | 'managed'> = {}
+      for (const m of (modeRes.data as { channel: string; mode: 'byog' | 'managed' }[] | null) || []) {
+        modeMap[m.channel] = m.mode
+      }
+      setModes(modeMap)
       if (gwRes.error) setMsg({ kind: 'err', text: gwRes.error })
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : String(e))
@@ -223,6 +239,18 @@ export default function AlertsSettingsPage() {
     setGwValues(init)
     setShowSecret({})
   }, [gwChannel, gwProvider, gateways])
+
+  // ---- delivery mode per channel -------------------------------------
+  async function setChannelMode(channel: string, mode: 'byog' | 'managed') {
+    if (!school) return
+    setModes((m) => ({ ...m, [channel]: mode }))
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('channel_modes')
+      .upsert({ school_id: school.id, channel, mode }, { onConflict: 'school_id,channel' })
+    if (error) flash('err', error.message)
+    else flash('ok', `${channel} set to ${mode === 'managed' ? 'Schoolium-managed' : 'your own gateway'}`)
+  }
 
   // ---- 1. pipeline switches ------------------------------------------
   async function saveSchool() {
@@ -267,6 +295,7 @@ export default function AlertsSettingsPage() {
       .from('channel_templates')
       .update({
         provider_template_id: ct.provider_template_id || null,
+        email_subject: ct.email_subject || null,
         approval_status: ct.approval_status,
         approved_at: ct.approval_status === 'approved' ? new Date().toISOString() : null,
       })
@@ -522,14 +551,25 @@ export default function AlertsSettingsPage() {
                     <div key={ct.id} className="flex flex-wrap items-center gap-2 py-2 border-t border-slate-50 text-sm">
                       <span className="capitalize text-slate-600 w-20">{ct.channel}</span>
                       <span className={ct.category === 'marketing' ? 'badge-yellow' : 'badge-blue'}>{ct.category}</span>
-                      <input
-                        className="input !py-1 text-xs flex-1 min-w-32"
-                        placeholder="DLT template id / Meta template name"
-                        value={ct.provider_template_id ?? ''}
-                        onChange={(e) => setTemplates((old) => old.map((x) => x.id === t.id
-                          ? { ...x, channel_templates: x.channel_templates.map((c) => c.id === ct.id ? { ...c, provider_template_id: e.target.value } : c) }
-                          : x))}
-                      />
+                      {ct.channel === 'email' ? (
+                        <input
+                          className="input !py-1 text-xs flex-1 min-w-32"
+                          placeholder="Email subject (supports {{school}}, {{child}}…)"
+                          value={ct.email_subject ?? ''}
+                          onChange={(e) => setTemplates((old) => old.map((x) => x.id === t.id
+                            ? { ...x, channel_templates: x.channel_templates.map((c) => c.id === ct.id ? { ...c, email_subject: e.target.value } : c) }
+                            : x))}
+                        />
+                      ) : (
+                        <input
+                          className="input !py-1 text-xs flex-1 min-w-32"
+                          placeholder="DLT template id / Meta template name"
+                          value={ct.provider_template_id ?? ''}
+                          onChange={(e) => setTemplates((old) => old.map((x) => x.id === t.id
+                            ? { ...x, channel_templates: x.channel_templates.map((c) => c.id === ct.id ? { ...c, provider_template_id: e.target.value } : c) }
+                            : x))}
+                        />
+                      )}
                       <select
                         className="input !py-1 text-xs w-28"
                         value={ct.approval_status}
@@ -587,7 +627,49 @@ export default function AlertsSettingsPage() {
             </div>
           </div>
 
-          {/* ---- 3. gateways (the vault) ---- */}
+          {/* ---- 3. delivery mode per channel ---- */}
+          <div className="card">
+            <h2 className="text-sm font-semibold text-slate-800 mb-1">Delivery mode</h2>
+            <p className="text-xs text-slate-400 mb-4">
+              Per channel, choose whether messages go through <b>your own gateway</b> (your API keys —
+              cheapest, high limits, you pay the provider directly) or are <b>handled by Schoolium</b>
+              {' '}(we send from our gateway and bill you at our rates — no setup).
+            </p>
+            <div className="space-y-2">
+              {ALERT_CHANNELS.map(({ channel, label }) => {
+                const mode = modes[channel] ?? 'byog'
+                return (
+                  <div key={channel} className="flex items-center justify-between gap-3 py-1.5">
+                    <span className="text-sm font-medium text-slate-700 w-24">{label}</span>
+                    <div className="inline-flex rounded-lg bg-slate-100 p-1">
+                      <button
+                        onClick={() => void setChannelMode(channel, 'byog')}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                          mode === 'byog' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        My own keys
+                      </button>
+                      <button
+                        onClick={() => void setChannelMode(channel, 'managed')}
+                        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                          mode === 'managed' ? 'bg-white text-brand-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        Schoolium-managed
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="text-xs text-slate-400 mt-3 pt-3 border-t border-slate-50">
+              Managed channels ignore the gateway credentials below — you only need to enter your own
+              keys for channels set to &ldquo;My own keys&rdquo;.
+            </p>
+          </div>
+
+          {/* ---- 4. gateways (the vault) ---- */}
           <div className="card">
             <h2 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-1.5">
               <ShieldCheck size={15} className="text-brand-600" /> Your gateways

@@ -283,6 +283,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
+  // { once: true } drains whatever is due right now and returns
+  // immediately (no morning-burst polling) - used by the "Send now"
+  // button so a live demo does not wait up to a minute.
+  let once = false
+  try { once = (await req.json())?.once === true } catch { /* empty body is fine */ }
+
   const db = admin()
   const startedAt = Date.now()
   const summary = { batches: 0, claimed: 0, sent: 0, failed: 0, dead_lettered: 0 }
@@ -305,6 +311,7 @@ export async function POST(req: Request) {
       if (rows.length === BATCH_LIMIT && Date.now() - startedAt < LOOP_DEADLINE_MS) continue
     }
 
+    if (once) break
     if (!inMorningBurstIST()) break
     if (Date.now() - startedAt + POLL_INTERVAL_MS >= LOOP_DEADLINE_MS) break
     await sleep(POLL_INTERVAL_MS)

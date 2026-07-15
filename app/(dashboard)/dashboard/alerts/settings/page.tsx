@@ -282,6 +282,61 @@ export default function AlertsSettingsPage() {
     else { flash('ok', 'Starter templates created'); void load() }
   }
 
+  // One-click demo wiring: enable alerts, seed the human templates, and
+  // create APPROVED WhatsApp channel templates that point at Meta
+  // templates already approved on your WABA (student_entry_alert /
+  // student_exit_alert, params: child name, school, time). After this
+  // you only enter your Meta credential under Gateways and scan.
+  const [demoBusy, setDemoBusy] = useState(false)
+  async function setupWhatsappDemo() {
+    if (!school) return
+    setDemoBusy(true)
+    const supabase = createClient()
+    try {
+      const up = await supabase.from('schools')
+        .update({ alerts_enabled: true, checkout_alerts_enabled: true })
+        .eq('id', school.id)
+      if (up.error) throw up.error
+
+      const seed = await supabase.rpc('seed_default_message_templates', { p_school_id: school.id })
+      if (seed.error) throw seed.error
+
+      const { data: mts, error: mtErr } = await supabase
+        .from('message_templates').select('id, key')
+        .eq('school_id', school.id).in('key', ['checkin', 'checkout'])
+      if (mtErr) throw mtErr
+
+      const byKey = new Map((mts as { id: string; key: string }[]).map((m) => [m.key, m.id]))
+      const varMap = { '1': 'child', '2': 'school', '3': 'time' }
+      const rows = [
+        { key: 'checkin', meta: 'student_entry_alert' },
+        { key: 'checkout', meta: 'student_exit_alert' },
+      ]
+        .filter((r) => byKey.has(r.key))
+        .map((r) => ({
+          school_id: school.id,
+          message_template_id: byKey.get(r.key)!,
+          channel: 'whatsapp',
+          category: 'utility',
+          provider_template_id: r.meta,
+          var_map: varMap,
+          approval_status: 'approved',
+          approved_at: new Date().toISOString(),
+        }))
+
+      const ins = await supabase.from('channel_templates')
+        .upsert(rows, { onConflict: 'school_id,message_template_id,channel' })
+      if (ins.error) throw ins.error
+
+      setSchool({ ...school, alerts_enabled: true, checkout_alerts_enabled: true })
+      flash('ok', 'WhatsApp demo wired. Now add your Meta credential under Gateways, then scan a student.')
+      void load()
+    } catch (e) {
+      flash('err', e instanceof Error ? e.message : String(e))
+    }
+    setDemoBusy(false)
+  }
+
   async function saveTemplateBody(t: Tpl) {
     const supabase = createClient()
     const { error } = await supabase.from('message_templates').update({ body: t.body }).eq('id', t.id)
@@ -444,6 +499,24 @@ export default function AlertsSettingsPage() {
         <div className="card h-64 animate-pulse bg-slate-50" />
       ) : (
         <div className="space-y-6">
+          {/* ---- 0. WhatsApp demo quick-start ---- */}
+          <div className="card border-l-4 border-brand-500 bg-brand-50/40">
+            <h2 className="text-sm font-semibold text-slate-800 mb-1 flex items-center gap-1.5">
+              <Sparkles size={15} className="text-brand-600" /> WhatsApp demo quick-start
+            </h2>
+            <p className="text-xs text-slate-600 mb-3">
+              One click enables alerts and wires check-in + check-out to your <b>already-approved</b> Meta
+              templates <span className="font-mono">student_entry_alert</span> /{' '}
+              <span className="font-mono">student_exit_alert</span> (variables: child name, school, time).
+              Then just add your Meta credential under <b>Your gateways</b> below and scan a student —
+              use <b>Send now</b> on the Alerts page to deliver instantly.
+            </p>
+            <button onClick={() => void setupWhatsappDemo()} disabled={demoBusy}
+              className="btn-primary flex items-center gap-1.5 disabled:opacity-50">
+              <Sparkles size={14} /> {demoBusy ? 'Setting up…' : 'Set up WhatsApp demo'}
+            </button>
+          </div>
+
           {/* ---- 1. pipeline ---- */}
           <div className="card">
             <h2 className="text-sm font-semibold text-slate-800 mb-4">Pipeline</h2>

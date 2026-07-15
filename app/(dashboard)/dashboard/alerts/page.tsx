@@ -141,6 +141,25 @@ export default function AlertsOverviewPage() {
     setNotifications((n) => n.filter((x) => x.id !== id))
   }
 
+  // "Send now": drain the queue immediately (demos + before cron is set
+  // up). The worker secret stays server-side (/api/alerts/run-worker).
+  const [sending, setSending] = useState(false)
+  const [sendMsg, setSendMsg] = useState('')
+  async function sendNow() {
+    setSending(true)
+    setSendMsg('')
+    try {
+      const res = await fetch('/api/alerts/run-worker', { method: 'POST' })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) setSendMsg(body.error ?? 'Send failed')
+      else setSendMsg(`Sent ${body.sent ?? 0}${body.failed ? `, ${body.failed} failed` : ''}${body.dead_lettered ? `, ${body.dead_lettered} dead` : ''}`)
+    } catch (e) {
+      setSendMsg(e instanceof Error ? e.message : String(e))
+    }
+    setSending(false)
+    void load(range)
+  }
+
   // Monthly reconciliation export: the school checks this against
   // their Meta/DLT invoice in five minutes. Masked recipients only.
   function exportCsv() {
@@ -192,6 +211,17 @@ export default function AlertsOverviewPage() {
         </div>
         <div className="flex items-center gap-2">
           {canCompose && (
+            <button
+              onClick={() => void sendNow()}
+              disabled={sending}
+              title="Deliver everything queued right now"
+              className="btn-secondary flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <RefreshCw size={15} className={sending ? 'animate-spin' : ''} />
+              {sending ? 'Sending…' : 'Send now'}
+            </button>
+          )}
+          {canCompose && (
             <Link href="/dashboard/alerts/compose" className="btn-primary flex items-center gap-1.5">
               <Send size={15} /> Send notice
             </Link>
@@ -217,6 +247,12 @@ export default function AlertsOverviewPage() {
       {loadError && (
         <div className="card mb-6 border-l-4 border-red-500 text-sm text-red-700 flex items-start gap-3">
           <AlertTriangle size={18} className="mt-0.5 shrink-0" /> {loadError}
+        </div>
+      )}
+
+      {sendMsg && (
+        <div className="card mb-4 border-l-4 border-brand-400 text-sm text-slate-700 flex items-center gap-2">
+          <RefreshCw size={15} className="text-brand-500 shrink-0" /> {sendMsg}
         </div>
       )}
 

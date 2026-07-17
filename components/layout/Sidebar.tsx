@@ -44,7 +44,7 @@ const ROLE_NAV: Record<string, string[]> = {
   principal:    ['/dashboard', '/dashboard/students', '/dashboard/fees', '/dashboard/classes', '/dashboard/attendance', '/dashboard/exams', '/dashboard/alerts'],
   operator:     ['/dashboard/alerts', '/dashboard/students'],
   teacher:      ['/dashboard'],
-  collector:    ['/dashboard/fees'],
+  collector:    ['/dashboard', '/dashboard/fees'],
   receptionist: ['/dashboard/students', '/dashboard/classes'],
   staff:        [],
 }

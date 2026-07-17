@@ -8,6 +8,7 @@ import {
 import Link from 'next/link'
 import TeacherDashboard from './TeacherDashboard'
 import PrincipalDashboard from './PrincipalDashboard'
+import CollectorDashboard from './CollectorDashboard'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtINR(n: number) {
@@ -44,7 +45,10 @@ export default async function DashboardPage() {
   if (role === 'principal') {
     return <PrincipalDashboard schoolName={schoolName} />
   }
-  if (role === 'teacher' || role === 'staff' || role === 'collector' || role === 'receptionist') {
+  if (role === 'collector') {
+    return <CollectorDashboard userId={user.id} schoolId={schoolId} schoolName={schoolName} />
+  }
+  if (role === 'teacher' || role === 'staff' || role === 'receptionist') {
     return <TeacherDashboard userId={user.id} schoolName={schoolName} />
   }
 

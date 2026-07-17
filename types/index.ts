@@ -604,6 +604,13 @@ export interface ClassFeeSummaryRow {
 
 
 // ============================================
+// EXAM MODULE — see types/exams.ts
+// ============================================
+
+export * from './exams'
+
+
+// ============================================
 // ALERTS BYOG PIPELINE (chat21)
 // docs/schoolium-alerts-blueprint.md
 // ============================================
@@ -613,7 +620,8 @@ export type TemplateCategory    = 'utility' | 'marketing' | 'service' | 'transac
 export type ApprovalStatus      = 'draft' | 'submitted' | 'approved' | 'rejected' | 'paused'
 export type OutboxStatus        = 'queued' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed' | 'dead'
 export type ChannelHealth       = 'unverified' | 'ok' | 'auth_failed' | 'low_balance' | 'suspended'
-export type ChannelProvider     = 'meta_cloud' | 'msg91' | 'gupshup' | 'generic_http' | 'smtp' | 'fake'
+export type ChannelProvider     = 'meta_cloud' | 'msg91' | 'gupshup' | 'generic_http' | 'smtp' | 'resend' | 'fake'
+export type MessagingMode       = 'byog' | 'managed'
 export type AlertEventType      = 'student.checked_in' | 'student.checked_out' | 'student.absent_at_cutoff' | 'notice.published'
 export type NotificationKind    = 'spend_cap_hit' | 'stale_suppressed' | 'enqueue_error' | 'channel_unhealthy' | 'low_balance' | 'absent_skipped_no_scans'
 export type ImportBatchStatus   = 'uploaded' | 'validated' | 'applied' | 'discarded'
@@ -696,6 +704,7 @@ export interface MessageOutbox {
   triggered_by: 'scan' | 'cutoff' | 'composer' | 'test' | 'system'
   sent_by_user_id: string | null
   sent_at: string | null
+  mode: MessagingMode        // byog = school's gateway, managed = Schoolium's (chat22)
   created_at: string
   updated_at: string
 }
@@ -705,7 +714,30 @@ export interface RateCard {
   category: TemplateCategory
   paise: number
   gst_pct: number
+  mode: MessagingMode        // chat22
   effective_from: string
+}
+
+// Per-channel delivery mode (chat22). No row = 'byog'.
+export interface ChannelMode {
+  school_id: string
+  channel: AlertChannel
+  mode: MessagingMode
+  updated_at: string
+}
+
+// platform_channels (Schoolium's own vault) is service-role only.
+// UI-safe projection, same shape as SchoolChannelSummary minus school:
+export interface PlatformChannelSummary {
+  id: string
+  channel: AlertChannel
+  provider: ChannelProvider
+  config: Record<string, unknown>       // non-secret config prefills the edit form
+  health: ChannelHealth
+  is_active: boolean
+  last_verified_at: string | null
+  balance_hint_paise: number | null
+  secret_fingerprint_last6: string
 }
 
 export interface SpendGuard {
@@ -799,3 +831,4 @@ export interface NoticeDeliveryStats {
   n_dead: number
   cost_paise: number
 }
+

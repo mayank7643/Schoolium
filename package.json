@@ -9,23 +9,24 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^3.4.4",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.45.4",
+    "clsx": "^2.1.1",
+    "html5-qrcode": "^2.3.8",
+    "lucide-react": "^0.383.0",
     "next": "14.2.5",
+    "qrcode": "^1.5.4",
     "react": "^18",
     "react-dom": "^18",
-    "lucide-react": "^0.383.0",
-    "clsx": "^2.1.1",
-    "tailwind-merge": "^2.5.2",
-    "@react-pdf/renderer": "^3.4.4",
-    "html5-qrcode": "^2.3.8",
-    "qrcode": "^1.5.4"
+    "recharts": "^2.15.0",
+    "tailwind-merge": "^2.5.2"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "@types/qrcode": "^1.5.5",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "@types/qrcode": "^1.5.5",
     "autoprefixer": "^10.0.1",
     "eslint": "^8",
     "eslint-config-next": "14.2.5",
